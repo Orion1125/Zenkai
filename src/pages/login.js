@@ -30,23 +30,12 @@ export function renderLogin(container) {
     <div class="brand-sub">sign in</div>
 
     <div class="step-title">Welcome Back</div>
-    <p class="step-tagline">Sign in to view your allocation and referral dashboard.</p>
+    <p class="step-tagline">Sign in with your Gmail to view your allocation and referral dashboard.</p>
 
     <div class="input-group">
       <label for="li-username">Gmail</label>
       <input type="email" id="li-username" class="input-field" placeholder="you@gmail.com"
         autocomplete="email" spellcheck="false" maxlength="254" />
-    </div>
-
-    <div class="input-group">
-      <label for="li-password">Password</label>
-      <div style="position:relative">
-        <input type="password" id="li-password" class="input-field" placeholder="password"
-          autocomplete="current-password" maxlength="100" style="padding-right:46px" />
-        <button class="pw-toggle" id="li-pw-toggle" type="button" aria-label="Show password">
-          <svg id="li-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
-      </div>
     </div>
 
     <p class="input-error" id="li-error"></p>
@@ -57,26 +46,17 @@ export function renderLogin(container) {
   container.appendChild(el);
 
   const usernameEl = document.getElementById('li-username');
-  const passwordEl = document.getElementById('li-password');
   const errorEl    = document.getElementById('li-error');
   const submitBtn  = document.getElementById('li-submit');
 
   function validate() {
-    submitBtn.disabled = usernameEl.value.trim().length < 1 || passwordEl.value.length < 1;
+    submitBtn.disabled = usernameEl.value.trim().length < 3;
   }
 
   usernameEl.addEventListener('input', validate);
-  passwordEl.addEventListener('input', validate);
-
-  document.getElementById('li-pw-toggle')?.addEventListener('click', () => {
-    const isHidden = passwordEl.type === 'password';
-    passwordEl.type = isHidden ? 'text' : 'password';
-    document.getElementById('li-eye').style.opacity = isHidden ? '1' : '0.4';
-  });
 
   async function doLogin() {
     const username = usernameEl.value.trim();
-    const password = passwordEl.value;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Signing in...';
     errorEl.textContent = '';
@@ -85,7 +65,7 @@ export function renderLogin(container) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -129,7 +109,7 @@ export function renderLogin(container) {
   }
 
   submitBtn.addEventListener('click', doLogin);
-  passwordEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !submitBtn.disabled) doLogin(); });
+  usernameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !submitBtn.disabled) doLogin(); });
   document.getElementById('li-signup').addEventListener('click', () => navigate('/signup'));
   requestAnimationFrame(() => usernameEl.focus());
 }

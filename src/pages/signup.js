@@ -40,23 +40,12 @@ export function renderSignup(container) {
     <div class="brand-sub">create account</div>
 
     <div class="step-title">Join the Protocol</div>
-    <p class="step-tagline">Create an account to save your result and unlock your referral link.</p>
+    <p class="step-tagline">Enter your Gmail to create an account and unlock your referral link.</p>
 
     <div class="input-group">
       <label for="su-username">Gmail</label>
       <input type="email" id="su-username" class="input-field" placeholder="you@gmail.com"
         autocomplete="email" spellcheck="false" maxlength="254" />
-    </div>
-
-    <div class="input-group">
-      <label for="su-password">Password</label>
-      <div style="position:relative">
-        <input type="password" id="su-password" class="input-field" placeholder="min. 6 characters"
-          autocomplete="new-password" maxlength="100" style="padding-right:46px" />
-        <button class="pw-toggle" id="su-pw-toggle" type="button" aria-label="Show password">
-          <svg id="su-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        </button>
-      </div>
     </div>
 
     <div class="input-group">
@@ -73,7 +62,6 @@ export function renderSignup(container) {
   container.appendChild(el);
 
   const usernameEl = document.getElementById('su-username');
-  const passwordEl = document.getElementById('su-password');
   const refEl      = document.getElementById('su-ref');
   const errorEl    = document.getElementById('su-error');
   const submitBtn  = document.getElementById('su-submit');
@@ -81,23 +69,13 @@ export function renderSignup(container) {
   const GMAIL_RE = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i;
   function validate() {
     const u = usernameEl.value.trim();
-    const p = passwordEl.value;
-    submitBtn.disabled = !GMAIL_RE.test(u) || p.length < 6;
+    submitBtn.disabled = !GMAIL_RE.test(u);
   }
 
   usernameEl.addEventListener('input', validate);
-  passwordEl.addEventListener('input', validate);
-
-  // Password toggle
-  document.getElementById('su-pw-toggle')?.addEventListener('click', () => {
-    const isHidden = passwordEl.type === 'password';
-    passwordEl.type = isHidden ? 'text' : 'password';
-    document.getElementById('su-eye').style.opacity = isHidden ? '1' : '0.4';
-  });
 
   submitBtn.addEventListener('click', async () => {
     const username = usernameEl.value.trim();
-    const password = passwordEl.value;
     const referralCode = refCode || (refEl ? refEl.value.trim() : '');
 
     submitBtn.disabled = true;
@@ -108,7 +86,7 @@ export function renderSignup(container) {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, referralCode }),
+        body: JSON.stringify({ username, referralCode }),
       });
       const data = await res.json();
       if (!res.ok) {

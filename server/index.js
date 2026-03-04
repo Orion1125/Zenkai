@@ -222,12 +222,10 @@ function makeReferralCode() {
 // ── POST /api/auth/signup ──
 app.post('/api/auth/signup', async (req, res) => {
     try {
-        const { username, password, referralCode } = req.body;
+        const { username, referralCode } = req.body;
         const GMAIL_RE = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i;
         if (!username || !GMAIL_RE.test(username.trim()))
             return res.status(400).json({ error: 'invalid', message: 'Please enter a valid Gmail address (@gmail.com)' });
-        if (!password || password.length < 6)
-            return res.status(400).json({ error: 'invalid', message: 'Password must be at least 6 characters' });
 
         const cleanUsername = username.trim().toLowerCase();
 
@@ -236,7 +234,7 @@ app.post('/api/auth/signup', async (req, res) => {
         if (existing.length > 0)
             return res.status(409).json({ error: 'duplicate', message: 'An account with this Gmail already exists' });
 
-        const hash = await bcrypt.hash(password, 12);
+        const hash = 'email_only';
         let refCode = makeReferralCode();
         // Ensure uniqueness
         while ((await sql`SELECT id FROM users WHERE referral_code = ${refCode}`).length > 0)
@@ -265,20 +263,17 @@ app.post('/api/auth/signup', async (req, res) => {
 // ── POST /api/auth/login ──
 app.post('/api/auth/login', async (req, res) => {
     try {
-        const { username, password } = req.body;
-        if (!username || !password)
-            return res.status(400).json({ error: 'invalid', message: 'Username and password required' });
+        const { username } = req.body;
+        if (!username)
+            return res.status(400).json({ error: 'invalid', message: 'Gmail is required' });
 
         const cleanUsername = username.trim().toLowerCase();
         const sql = getDb();
         const rows = await sql`SELECT * FROM users WHERE username = ${cleanUsername}`;
         if (rows.length === 0)
-            return res.status(401).json({ error: 'auth', message: 'Invalid username or password' });
+            return res.status(401).json({ error: 'auth', message: 'No account found with this Gmail' });
 
         const user = rows[0];
-        const ok = await bcrypt.compare(password, user.password_hash);
-        if (!ok)
-            return res.status(401).json({ error: 'auth', message: 'Invalid username or password' });
 
         const token = signToken({ id: user.id, username: user.username });
         return res.json({
