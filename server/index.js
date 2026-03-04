@@ -19,7 +19,29 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const ALLOWED_ORIGINS = new Set([
+    'https://zenkai.art',
+    'https://www.zenkai.art',
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
+]);
+
+app.use(cors({
+    origin: (origin, cb) => {
+        // Allow requests with no origin (server-to-server, curl, mobile apps)
+        if (!origin) return cb(null, true);
+        // Allow any LAN IP on typical Vite ports (for network testing)
+        if (/^http:\/\/192\.168\.|^http:\/\/10\.|^http:\/\/172\.(1[6-9]|2\d|3[01])\./.test(origin) && /:(5173|5174|5175)$/.test(origin))
+            return cb(null, true);
+        if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+        cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: true,
+}));
 app.use(express.json());
 
 // ── Helpers ──────────────────────────────────────────────────────
