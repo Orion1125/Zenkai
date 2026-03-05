@@ -113,5 +113,9 @@ export async function initDb() {
   // Add referral_credited flag if missing from existing tables
   try { await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_credited BOOLEAN NOT NULL DEFAULT FALSE`; } catch { /* ignore */ }
 
+  // Spin state columns
+  try { await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS spins_used INTEGER NOT NULL DEFAULT 0`; } catch { /* ignore */ }
+  try { await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS best_result VARCHAR(10)`; } catch { /* ignore */ }
+
   console.log('✓ Database initialized — all tables ready');
 }

@@ -13,14 +13,14 @@ export function renderStep2(container) {
       label: 'Follow <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">@zenkai_ETH</a> on X',
     },
     {
-      id: 'like',
+      id: 'rt',
       icon: '',
-      label: 'Like and Retweet <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a>',
+      label: 'Retweet <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a> and tag 2 friends',
     },
     {
       id: 'quote',
       icon: '',
-      label: 'Quote <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a> and tag 2 allies (caption "zenkai")',
+      label: 'Quote <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a> (caption "zenkai") and paste the link below',
     },
   ];
 
@@ -56,6 +56,11 @@ export function renderStep2(container) {
       `).join('')}
     </ul>
 
+    <div class="input-group" style="margin-top:8px">
+      <label for="quote-link-input">Quote Tweet Link</label>
+      <input type="url" id="quote-link-input" class="input-field" placeholder="https://x.com/..." autocomplete="off" spellcheck="false" />
+    </div>
+
     <p class="task-hint" id="task-hint"></p>
 
     <button class="btn-gold" id="step2-next" disabled>
@@ -69,6 +74,9 @@ export function renderStep2(container) {
   const nextBtn = document.getElementById('step2-next');
   const backBtn = document.getElementById('step2-back');
   const taskItems = document.querySelectorAll('.task-item');
+  const quoteLinkInput = document.getElementById('quote-link-input');
+
+  const TWEET_RE = /^https?:\/\/(x\.com|twitter\.com)\/\w+\/status\/\d+/i;
 
   function showHint(msg) {
     hintEl.textContent = msg;
@@ -81,7 +89,23 @@ export function renderStep2(container) {
     nextBtn.disabled = completed.size < tasks.length;
   }
 
-
+  // Auto-complete quote task when a valid link is entered
+  quoteLinkInput.addEventListener('input', () => {
+    const quoteItem = document.querySelector('.task-item[data-id="quote"]');
+    if (TWEET_RE.test(quoteLinkInput.value.trim())) {
+      if (!completed.has('quote')) {
+        completed.add('quote');
+        quoteItem.classList.add('completed');
+        updateNext();
+      }
+    } else {
+      if (completed.has('quote')) {
+        completed.delete('quote');
+        quoteItem.classList.remove('completed');
+        updateNext();
+      }
+    }
+  });
 
   //  Tasks 
   taskItems.forEach((item) => {
@@ -98,6 +122,12 @@ export function renderStep2(container) {
 
     item.addEventListener('click', (e) => {
       if (e.target.tagName === 'A') return;
+
+      // Quote task is controlled by the input field, not clicks
+      if (id === 'quote') {
+        showHint('Paste your quote tweet link above');
+        return;
+      }
 
       if (!linkClicked.has(id)) {
         showHint('Complete the action first, warrior');
@@ -119,6 +149,8 @@ export function renderStep2(container) {
 
   //  Navigation 
   nextBtn.addEventListener('click', () => {
+    // Store quote link for later submission
+    sessionStorage.setItem('zenkai_quote_url', quoteLinkInput.value.trim());
     navigate('/step3');
   });
 

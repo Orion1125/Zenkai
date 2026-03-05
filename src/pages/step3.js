@@ -1,5 +1,7 @@
-// ZENKAI — Step 3: Awakening Wheel + 3-Spin Result Tracking
+// ZENKAI — Step 3: Awakening Wheel + 2-Spin Result Tracking
 import { navigate } from '../router.js';
+import { startSpinSound, stopSpinSound } from '../sound.js';
+import { getToken, authFetch } from '../auth.js';
 
 // ── Wheel design: 36 equal segments, 12 per type (casino roulette style) ──
 // Arrangement: [gtd, fcfs, fail] × 12  — visually equal, probability is code-weighted
@@ -31,9 +33,23 @@ function bestOf(a, b) {
   return RANK[a] <= RANK[b] ? a : b;
 }
 
-export function renderStep3(container) {
+export async function renderStep3(container) {
+  // Load spin state from server if logged in, fall back to localStorage
   let spinsUsed  = parseInt(localStorage.getItem('zenkai_spins_used') || '0', 10);
   let bestResult = localStorage.getItem('zenkai_best_result') || null;
+
+  if (getToken()) {
+    try {
+      const res = await authFetch('/api/auth/me');
+      if (res.ok) {
+        const { user } = await res.json();
+        if (typeof user.spins_used === 'number') spinsUsed = user.spins_used;
+        if (user.best_result) bestResult = user.best_result;
+        localStorage.setItem('zenkai_spins_used', String(spinsUsed));
+        if (bestResult) localStorage.setItem('zenkai_best_result', bestResult);
+      }
+    } catch { /* use localStorage values */ }
+  }
 
   if (spinsUsed >= MAX_SPINS) {
     if (bestResult && bestResult !== 'fail') navigate('/step4');
@@ -201,6 +217,7 @@ export function renderStep3(container) {
     spinning = true;
     spinBtn.disabled = true;
     spinBtn.textContent = 'Spinning...';
+    startSpinSound();
 
     // â”€â”€ Weighted outcome: GTD 2.5% | FCFS 47.5% | Fail 50% â”€â”€
     const roll   = Math.random() * 100;
@@ -233,12 +250,21 @@ export function renderStep3(container) {
         rotation = target;
         drawWheel(rotation);
         spinning = false;
+        stopSpinSound();
 
         spinsUsed++;
         localStorage.setItem('zenkai_spins_used', spinsUsed);
         bestResult = bestOf(bestResult, typeId);
         localStorage.setItem('zenkai_best_result', bestResult);
         localStorage.setItem('zenkai_result', bestResult);
+
+        // Persist spin state to server
+        if (getToken()) {
+          authFetch('/api/auth/save-spin', {
+            method: 'POST',
+            body: JSON.stringify({ spinsUsed, bestResult }),
+          }).catch(() => {});
+        }
 
         updateTracker();
         setTimeout(() => showResultPopup(typeId, spinsUsed), 300);

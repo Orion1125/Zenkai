@@ -5,7 +5,7 @@
 import './style.css';
 import { initScene } from './scene.js';
 import { registerRoute, navigate, initRouter } from './router.js';
-import { getToken, getRefCodeFromUrl } from './auth.js';
+import { getToken, getRefCodeFromUrl, authFetch } from './auth.js';
 import { renderStep1 } from './pages/step1.js';
 import { renderStep2 } from './pages/step2.js';
 import { renderStep3 } from './pages/step3.js';
@@ -25,10 +25,34 @@ if (_refCode) {
 // Initialize background scene
 initScene();
 
-// Root: redirect to /signup (with ref code) or /step1/signup based on auth state
-function renderRoot() {
+// Root: smart redirect based on auth + progress
+async function renderRoot() {
   if (_refCode) { navigate('/signup?ref=' + _refCode); return; }
-  navigate(getToken() ? '/step1' : '/signup');
+  if (!getToken()) { navigate('/signup'); return; }
+
+  // Logged in — check server state to resume where they left off
+  try {
+    const res = await authFetch('/api/auth/me');
+    if (!res.ok) { navigate('/signup'); return; }
+    const { user } = await res.json();
+
+    if (user.completed_at) { navigate('/dashboard'); return; }
+
+    // Sync spin state to localStorage so step3 has it immediately
+    if (typeof user.spins_used === 'number') localStorage.setItem('zenkai_spins_used', String(user.spins_used));
+    if (user.best_result) localStorage.setItem('zenkai_best_result', user.best_result);
+    if (user.x_handle) sessionStorage.setItem('zenkai_handle', user.x_handle);
+
+    const spins = user.spins_used || 0;
+    if (spins >= 2 && user.best_result && user.best_result !== 'fail') { navigate('/step4'); return; }
+    if (spins >= 2) { navigate('/step5'); return; }
+    if (spins > 0) { navigate('/step3'); return; }
+
+    // No spins yet — start from step1
+    navigate('/step1');
+  } catch {
+    navigate('/signup');
+  }
 }
 
 // Register routes

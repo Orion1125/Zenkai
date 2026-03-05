@@ -297,7 +297,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
         const sql = getDb();
         const rows = await sql`
             SELECT id, username, referral_code, x_handle, spot_type,
-                   extra_spins, completed_at, created_at FROM users WHERE id = ${req.user.id}
+                   extra_spins, completed_at, created_at, spins_used, best_result FROM users WHERE id = ${req.user.id}
         `;
         if (rows.length === 0) return res.status(404).json({ error: 'not_found', message: 'User not found' });
         const user = rows[0];
@@ -377,6 +377,29 @@ app.post('/api/auth/complete', requireAuth, async (req, res) => {
         res.json({ user });
     } catch (err) {
         console.error('[complete]', err);
+        res.status(500).json({ error: 'server', message: 'Internal server error' });
+    }
+});
+
+// ── POST /api/auth/save-spin — Record spin result after each spin ──
+app.post('/api/auth/save-spin', requireAuth, async (req, res) => {
+    try {
+        const { spinsUsed, bestResult } = req.body;
+        if (typeof spinsUsed !== 'number' || spinsUsed < 0 || spinsUsed > 10)
+            return res.status(400).json({ error: 'invalid', message: 'Invalid spins_used' });
+        if (bestResult && !['gtd', 'fcfs', 'fail'].includes(bestResult))
+            return res.status(400).json({ error: 'invalid', message: 'Invalid best_result' });
+
+        const sql = getDb();
+        const [user] = await sql`
+            UPDATE users
+            SET spins_used = ${spinsUsed}, best_result = ${bestResult || null}
+            WHERE id = ${req.user.id}
+            RETURNING spins_used, best_result
+        `;
+        res.json({ spins_used: user.spins_used, best_result: user.best_result });
+    } catch (err) {
+        console.error('[save-spin]', err);
         res.status(500).json({ error: 'server', message: 'Internal server error' });
     }
 });
