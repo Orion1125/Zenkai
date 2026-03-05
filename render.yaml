@@ -1,0 +1,16 @@
+# ══════════════════════════════════════════════
+# Zenkai — Render Blueprint
+# ══════════════════════════════════════════════
+
+services:
+  - type: web
+    name: zenkai
+    runtime: node
+    plan: free
+    buildCommand: npm run render-build
+    startCommand: npm run start
+    envVars:
+      - key: DATABASE_URL
+        sync: true  # set manually in Render dashboard
+      - key: NODE_ENV
+        value: production
