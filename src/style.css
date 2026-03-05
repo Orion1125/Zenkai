@@ -807,6 +807,41 @@ html, body {
 ::-webkit-scrollbar-thumb { background: rgba(255,208,0,0.15); border-radius: 2px; }
 
 /* ==============================
+   WHEEL LEGEND
+   ============================== */
+.wheel-legend {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  margin: 8px 0 14px;
+  flex-wrap: wrap;
+}
+.wl-item {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 2px;
+  padding: 3px 9px 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wl-item::before {
+  content: '';
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.wl-gtd  { color:#FFD700; border:1px solid rgba(255,215,0,0.3); }
+.wl-gtd::before  { background:#8B6800; border:1px solid #C8900A; }
+.wl-fcfs { color:#FF6677; border:1px solid rgba(255,50,50,0.3); }
+.wl-fcfs::before { background:#7A0000; border:1px solid #FF2233; }
+.wl-fail { color:#806050; border:1px solid rgba(255,255,255,0.08); }
+.wl-fail::before { background:#0D0D0D; border:1px solid #3A1A1A; }
+
+/* ==============================
    AUTH FORMS  (signup / login)
    ============================== */
 

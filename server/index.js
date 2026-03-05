@@ -351,8 +351,8 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 });
 
 // ── POST /api/auth/complete — Save x_handle + spot_type after completing the flow ──
-// spot_type is upgrade-only: gtd > fcfs > fail. Never downgrades.
-const SPOT_RANK = { gtd: 0, fcfs: 1, fail: 2 };
+// Upgrade-only via single atomic SQL: maps tiers to integers (gtd=1, fcfs=2, fail=3, null=4),
+// takes LEAST(), maps back. Never downgrades in a single round-trip (no read-then-write race).
 app.post('/api/auth/complete', requireAuth, async (req, res) => {
     try {
         const { xHandle, spotType } = req.body;
@@ -360,25 +360,37 @@ app.post('/api/auth/complete', requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'invalid', message: 'Invalid spot type' });
 
         const sql = getDb();
+        const handle = (xHandle || '').trim().slice(0, 100) || null;
 
-        // Read current state
-        const rows = await sql`SELECT x_handle, spot_type, completed_at FROM users WHERE id = ${req.user.id}`;
-        const cur = rows[0] || {};
-
-        // Only upgrade — never overwrite a better tier
-        const curRank  = cur.spot_type in SPOT_RANK ? SPOT_RANK[cur.spot_type] : 99;
-        const newRank  = SPOT_RANK[spotType];
-        const bestSpot = newRank < curRank ? spotType : (cur.spot_type || spotType);
-        const bestHandle = ((xHandle || '').trim().slice(0, 100)) || cur.x_handle || '';
-
-        const now = new Date().toISOString();
-        const setAt = cur.completed_at ? cur.completed_at : now;
-
+        // Single atomic UPDATE — no separate SELECT needed.
+        // Rank: gtd=1, fcfs=2, fail=3, NULL→4 (worst). LEAST picks best tier.
         const [user] = await sql`
             UPDATE users
-            SET x_handle     = ${bestHandle},
-                spot_type    = ${bestSpot},
-                completed_at = ${setAt}
+            SET
+                x_handle     = COALESCE(${handle}, x_handle),
+                completed_at = COALESCE(completed_at, NOW()),
+                spot_type    = CASE LEAST(
+                    COALESCE(
+                        CASE spot_type
+                            WHEN 'gtd'  THEN 1
+                            WHEN 'fcfs' THEN 2
+                            WHEN 'fail' THEN 3
+                            ELSE 4
+                        END,
+                        4
+                    ),
+                    CASE ${spotType}::text
+                        WHEN 'gtd'  THEN 1
+                        WHEN 'fcfs' THEN 2
+                        WHEN 'fail' THEN 3
+                        ELSE 4
+                    END
+                )
+                    WHEN 1 THEN 'gtd'
+                    WHEN 2 THEN 'fcfs'
+                    WHEN 3 THEN 'fail'
+                    ELSE        'fail'
+                END
             WHERE id = ${req.user.id}
             RETURNING id, username, referral_code, x_handle, spot_type, extra_spins, completed_at
         `;
