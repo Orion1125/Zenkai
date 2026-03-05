@@ -3,21 +3,17 @@ import { navigate } from '../router.js';
 import { startSpinSound, stopSpinSound } from '../sound.js';
 import { getToken, authFetch } from '../auth.js';
 
-// ── Wheel design: 36 equal segments, 12 per type (casino roulette style) ──
-// Arrangement: [gtd, fcfs, fail] × 12  — visually equal, probability is code-weighted
+// ── Wheel design: 36 equal segments, 18 per type (FCFS + Fail) ──
 const SEG_COUNT   = 36;
 const SLICE       = (2 * Math.PI) / SEG_COUNT;
 
-// Build segment ring: gtd=0, fcfs=1, fail=2 repeating
 const TYPE_DEF = [
-  { id: 'gtd',  color: '#8B6800', colorLight: '#FFD700', rim: '#FFE84D' },
   { id: 'fcfs', color: '#7A0000', colorLight: '#FF2233', rim: '#FF6677' },
   { id: 'fail', color: '#0D0D0D', colorLight: '#2A1A1A', rim: '#3A1A1A' },
 ];
-const WHEEL_SEGMENTS = Array.from({ length: SEG_COUNT }, (_, i) => TYPE_DEF[i % 3]);
+const WHEEL_SEGMENTS = Array.from({ length: SEG_COUNT }, (_, i) => TYPE_DEF[i % 2]);
 
-// Lookup: for each type, which segment indices belong to it
-const TYPE_INDICES = { gtd: [], fcfs: [], fail: [] };
+const TYPE_INDICES = { fcfs: [], fail: [] };
 WHEEL_SEGMENTS.forEach((s, i) => TYPE_INDICES[s.id].push(i));
 
 // Starting rotation so segment 0 is nicely offset
@@ -26,7 +22,7 @@ const INITIAL_ROTATION = -(Math.PI / 2) + SLICE / 2;
 const MAX_SPINS = 2;
 
 // Rarity rank — lower = better
-const RANK = { gtd: 0, fcfs: 1, fail: 2 };
+const RANK = { fcfs: 1, fail: 2 };
 function bestOf(a, b) {
   if (!a) return b;
   if (!b) return a;
@@ -91,7 +87,6 @@ export async function renderStep3(container) {
     </div>
 
     <div class="wheel-legend">
-      <span class="wl-item wl-gtd">GTD</span>
       <span class="wl-item wl-fcfs">FCFS</span>
       <span class="wl-item wl-fail">TRY AGAIN</span>
     </div>
@@ -277,10 +272,8 @@ export async function renderStep3(container) {
   // â”€â”€ Result popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function showResultPopup(thisTypeId, usedCount) {
     const isFinal   = usedCount >= MAX_SPINS;
-    const alreadyGtd = bestResult === 'gtd';
 
     const META = {
-      gtd:  { label: 'GTD',       cls: 'gtd',  icon: '<svg width="32" height="32" viewBox="0 0 24 24" fill="#FFD700"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>', headline: 'GTD Secured',    desc: 'Guaranteed allocation locked in. The path to Zenkai is yours.' },
       fcfs: { label: 'FCFS',      cls: 'fcfs', icon: '<svg width="32" height="32" viewBox="0 0 24 24" fill="#FF2233"><path d="M12 23c-4.97 0-9-3.58-9-8 0-2.53 1.19-4.78 3.06-6.32C6.58 7.72 7 6.39 7 5c0-.55.45-1 1-1 .28 0 .53.11.71.29C9.63 5.2 10 6.55 10 8c0 .55.45 1 1 1s1-.45 1-1V4c0-.55.45-1 1-1s1 .45 1 1v1c0 .55.45 1 1 1s1-.45 1-1V3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55.45 1 1 1s1-.45 1-1V5c0-.55.45-1 1-1s1 .45 1 1c0 3.87-1.5 7.13-4 9.5V23h-5z"/></svg>', headline: 'FCFS Access',     desc: 'First come first served access granted. Stay ready when the gate opens.' },
       fail: { label: 'TRY AGAIN', cls: 'fail', icon: '<svg width="32" height="32" viewBox="0 0 24 24" fill="#666"><path d="M12 2a9 9 0 0 0-9 9c0 3.07 1.54 5.78 3.9 7.43L8 22h8l1.1-3.57A9 9 0 0 0 21 11a9 9 0 0 0-9-9zm-2.5 8a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm5 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm-6 5h7s-1 2-3.5 2-3.5-2-3.5-2z"/></svg>', headline: 'Energy Unstable', desc: 'The orb rejected you.' },
     };
@@ -322,8 +315,8 @@ export async function renderStep3(container) {
           }
           <p class="popup-spins-left">${spinsLeft} spin${spinsLeft !== 1 ? 's' : ''} remaining</p>
           <div class="popup-actions" style="margin-top:16px">
-            ${alreadyGtd
-              ? `<button class="btn-gold" id="popup-continue" style="display:inline-flex;align-items:center;gap:6px">Claim GTD <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>`
+            ${bestResult === 'fcfs'
+              ? `<button class="btn-gold" id="popup-continue" style="display:inline-flex;align-items:center;gap:6px">Claim FCFS <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>`
               : `<button class="btn-gold" id="popup-spinagain">Spin Again (${spinsLeft} left)</button>`
             }
           </div>

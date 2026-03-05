@@ -116,8 +116,8 @@ app.post('/api/allowlist', async (req, res) => {
         if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
             return res.status(400).json({ error: 'invalid', message: 'Invalid Ethereum address' });
         }
-        if (!['gtd', 'fcfs'].includes(tier)) {
-            return res.status(400).json({ error: 'invalid', message: 'Invalid tier' });
+        if (!['fcfs'].includes(tier)) {
+            return res.status(400).json({ error: 'invalid', message: 'GTD submissions are closed. Only FCFS is available.' });
         }
 
         const normalizedAddress = address.toLowerCase();
@@ -125,12 +125,8 @@ app.post('/api/allowlist', async (req, res) => {
         const sql = getDb();
 
         try {
-            if (tier === 'gtd') {
-                await sql`INSERT INTO allowlist_gtd (address, handle, ip, user_agent) VALUES (${normalizedAddress}, ${cleanHandle}, ${clientIp}, ${userAgent})`;
-            } else {
-                await sql`INSERT INTO allowlist_fcfs (address, handle, ip, user_agent) VALUES (${normalizedAddress}, ${cleanHandle}, ${clientIp}, ${userAgent})`;
-            }
-            return res.json({ success: true, message: `Wallet added to ${tier.toUpperCase()} allowlist` });
+            await sql`INSERT INTO allowlist_fcfs (address, handle, ip, user_agent) VALUES (${normalizedAddress}, ${cleanHandle}, ${clientIp}, ${userAgent})`;
+            return res.json({ success: true, message: 'Wallet added to FCFS allowlist' });
         } catch (err) {
             if (err.code === '23505' || (err.message && err.message.includes('unique'))) {
                 return res.status(409).json({ error: 'duplicate', message: 'Wallet already on allowlist' });
