@@ -286,7 +286,7 @@ export function renderStep3(container) {
       const bestDiffers = bestResult !== thisTypeId;
       overlay.innerHTML = `
         <div class="popup-card">
-          <div class="popup-spin-badge">Spin ${usedCount} / 3</div>
+          <div class="popup-spin-badge">Spin ${usedCount} / ${MAX_SPINS}</div>
           <span class="popup-icon">${thisMeta.icon}</span>
           <div class="popup-result-label ${thisMeta.cls}">${thisMeta.label}</div>
           <div class="popup-headline">${thisMeta.headline}</div>

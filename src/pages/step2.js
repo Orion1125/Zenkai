@@ -13,9 +13,14 @@ export function renderStep2(container) {
       label: 'Follow <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">@zenkai_ETH</a> on X',
     },
     {
-      id: 'tag',
+      id: 'like',
       icon: '',
-      label: 'Tag 2 allies in <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a> before spinning',
+      label: 'Like and Retweet <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a>',
+    },
+    {
+      id: 'quote',
+      icon: '',
+      label: 'Quote <a href="https://x.com/zenkai_ETH" target="_blank" rel="noopener">this post</a> and tag 2 allies (caption "zenkai")',
     },
   ];
 
@@ -38,8 +43,7 @@ export function renderStep2(container) {
       <div class="step-node">5</div>
     </div>
 
-    <div class="step-title">Step 2  Oath of Allegiance</div>
-    <p class="step-tagline">Follow @zenkai_ETH and tag 2 allies before spinning the Awakening Wheel.</p>
+    <div class="step-title">Step 2 — Oath of Allegiance</div>
 
     <ul class="task-list" id="task-list">
       ${tasks.map(t => `
