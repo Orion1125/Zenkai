@@ -15,7 +15,7 @@ export function renderStep2(container) {
     {
       id: 'rt',
       icon: '',
-      label: 'Retweet <a href="https://x.com/zenkai_eth/status/2029529852752089267" target="_blank" rel="noopener">this post</a> and tag 2 friends',
+      label: 'Like and Retweet <a href="https://x.com/zenkai_eth/status/2029529852752089267" target="_blank" rel="noopener">this post</a> and tag 2 friends',
     },
     {
       id: 'quote',
