@@ -31,19 +31,7 @@ export function renderStep2(container) {
     <div class="brand-logo">ZENKAI</div>
     <div class="brand-sub">awakening protocol</div>
 
-    <div class="step-indicator">
-      <div class="step-node done">1</div>
-      <div class="step-line done"></div>
-      <div class="step-node active">2</div>
-      <div class="step-line"></div>
-      <div class="step-node">3</div>
-      <div class="step-line"></div>
-      <div class="step-node">4</div>
-      <div class="step-line"></div>
-      <div class="step-node">5</div>
-    </div>
-
-    <div class="step-title">Step 2 — Oath of Allegiance</div>
+    <div class="step-title">Oath of Allegiance</div>
 
     <ul class="task-list" id="task-list">
       ${tasks.map(t => `
@@ -64,7 +52,7 @@ export function renderStep2(container) {
     <p class="task-hint" id="task-hint"></p>
 
     <button class="btn-gold" id="step2-next" disabled>
-      Proceed to Wheel
+      Proceed to Wallet
     </button>
     <button class="btn-ghost" id="step2-back"> Back</button>
   `;
@@ -156,7 +144,7 @@ export function renderStep2(container) {
   nextBtn.addEventListener('click', () => {
     // Store quote link for later submission
     sessionStorage.setItem('zenkai_quote_url', quoteLinkInput.value.trim());
-    navigate('/step3');
+    navigate('/step4');
   });
 
   backBtn.addEventListener('click', () => navigate('/'));

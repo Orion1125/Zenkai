@@ -7,15 +7,7 @@ export function renderLogin(container) {
   if (getToken()) {
     const u = JSON.parse(localStorage.getItem('zenkai_user') || 'null');
     if (u && u.completed_at) {
-      if (u.extra_spins > 0) {
-        if (u.x_handle) sessionStorage.setItem('zenkai_handle', u.x_handle);
-        localStorage.removeItem('zenkai_spins_used');
-        localStorage.removeItem('zenkai_best_result');
-        localStorage.removeItem('zenkai_result');
-        navigate('/step3');
-      } else {
-        navigate('/dashboard');
-      }
+      navigate('/dashboard');
     } else {
       navigate('/step1');
     }
@@ -88,16 +80,7 @@ export function renderLogin(container) {
       // Route based on completion state
       const u = data.user;
       if (u.completed_at) {
-        if (u.extra_spins > 0) {
-          // Send them back to spin wheel; pre-fill handle from their account
-          if (u.x_handle) sessionStorage.setItem('zenkai_handle', u.x_handle);
-          localStorage.removeItem('zenkai_spins_used');
-          localStorage.removeItem('zenkai_best_result');
-          localStorage.removeItem('zenkai_result');
-          navigate('/step3');
-        } else {
-          navigate('/dashboard');
-        }
+        navigate('/dashboard');
       } else {
         navigate('/step1');
       }

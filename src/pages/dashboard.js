@@ -30,7 +30,6 @@ export async function renderDashboard(container) {
   const spotType      = user.spot_type || null;
   const hasSpot       = spotType === 'gtd' || spotType === 'fcfs';
   const xHandle       = user.x_handle || '\u2014';
-  const extraSpins    = user.extra_spins || 0;
   const completed     = !!user.completed_at;
   // Wallet: prefer server value, fall back to localStorage
   const submittedWallet = user.submitted_wallet || localStorage.getItem('zenkai_submitted_wallet') || null;
@@ -75,13 +74,13 @@ export async function renderDashboard(container) {
     ${!completed ? `
     <div class="dash-warning">
       Complete the Awakening Protocol to lock in your allocation.
-      <button class="btn-ghost" id="dash-go-spin" style="margin-top:10px;font-size:0.65rem">Spin Now →</button>
+      <button class="btn-ghost" id="dash-go-start" style="margin-top:10px;font-size:0.65rem">Start Now →</button>
     </div>` : ''}
 
     <!-- Referral block -->
     <div class="dash-section-label">Referral Hub</div>
     <div class="dash-referral-card">
-      <p class="dash-ref-intro">Share your link. Each referral gives you <strong style="color:var(--gold)">+1 extra spin</strong> (max 10).</p>
+      <p class="dash-ref-intro">Share your link to spread the word.</p>
 
       <div class="dash-ref-link-row">
         <input type="text" class="input-field dash-ref-input" id="ref-link-input" value="${refLink}" readonly />
@@ -93,17 +92,7 @@ export async function renderDashboard(container) {
           <span class="dash-stat-value" style="color:var(--gold)">${user.referral_code}</span>
           <span class="dash-stat-label">Your Code</span>
         </div>
-        <div class="dash-stat">
-          <span class="dash-stat-value" style="color:${extraSpins > 0 ? 'var(--gold)' : 'var(--text-muted)'}">${extraSpins}</span>
-          <span class="dash-stat-label">Extra Spins</span>
-        </div>
       </div>
-
-      ${extraSpins > 0 ? `
-      <button class="btn-red" id="dash-use-spin" style="margin-top:14px">
-        Use Extra Spin (${extraSpins} remaining)
-      </button>` : `
-      <p class="dash-no-spins">Refer warriors to earn extra spins.</p>`}
     </div>
 
     <div class="dash-actions">
@@ -126,30 +115,11 @@ export async function renderDashboard(container) {
   });
 
   // ── Use extra spin ──────────────────────────────────────────────
-  document.getElementById('dash-use-spin')?.addEventListener('click', async () => {
-    const btn = document.getElementById('dash-use-spin');
-    btn.disabled = true;
-    btn.textContent = 'Activating spin...';
+  // (Removed — wheel spinning no longer available)
 
-    const res = await authFetch('/api/auth/extra-spin', { method: 'POST' });
-    const data = await res.json();
-    if (res.ok) {
-      // Pre-fill handle so step3→step4→persistCompletion works correctly
-      if (user.x_handle) sessionStorage.setItem('zenkai_handle', user.x_handle);
-      // Sync localStorage with server's reset state (spins_used=1, best_result=null)
-      localStorage.setItem('zenkai_spins_used', String(data.spins_used ?? 1));
-      localStorage.removeItem('zenkai_best_result');
-      localStorage.removeItem('zenkai_result');
-      navigate('/step3');
-    } else {
-      btn.disabled = false;
-      btn.textContent = data.message || 'No extra spins available';
-    }
-  });
-
-  // ── Go to spin flow ─────────────────────────────────────────────
-  document.getElementById('dash-go-spin')?.addEventListener('click', () => {
-    navigate('/step3');
+  // ── Go to start flow ─────────────────────────────────────────────
+  document.getElementById('dash-go-start')?.addEventListener('click', () => {
+    navigate('/step1');
   });
 
   // ── Logout ──────────────────────────────────────────────────────

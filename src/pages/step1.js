@@ -11,18 +11,6 @@ export function renderStep1(container) {
     <div class="brand-logo">ZENKAI</div>
     <div class="brand-sub">awakening protocol</div>
 
-    <div class="step-indicator">
-      <div class="step-node active">1</div>
-      <div class="step-line"></div>
-      <div class="step-node">2</div>
-      <div class="step-line"></div>
-      <div class="step-node">3</div>
-      <div class="step-line"></div>
-      <div class="step-node">4</div>
-      <div class="step-line"></div>
-      <div class="step-node">5</div>
-    </div>
-
     <div class="step-title">Begin Awakening</div>
     <p class="step-tagline">Enter your X username to begin awakening</p>
 
@@ -73,10 +61,6 @@ export function renderStep1(container) {
     if (!val) { errorEl.classList.add('visible'); return; }
     const handle = val.startsWith('@') ? val : '@' + val;
     sessionStorage.setItem('zenkai_handle', handle);
-    // Reset spin state for a fresh run
-    localStorage.removeItem('zenkai_spins_used');
-    localStorage.removeItem('zenkai_best_result');
-    localStorage.removeItem('zenkai_result');
     navigate('/step2');
   });
 

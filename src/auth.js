@@ -50,11 +50,10 @@ export async function refreshUser() {
     }
 }
 
-/** Persist the current session's spin result to the logged-in user's account */
+/** Persist completion to the logged-in user's account */
 export async function persistCompletion() {
     const xHandle  = sessionStorage.getItem('zenkai_handle');
-    const spotType = localStorage.getItem('zenkai_result');
-    if (!spotType) return;
+    const spotType = 'fcfs';
     const token = getToken();
     if (!token) return;
     try {
