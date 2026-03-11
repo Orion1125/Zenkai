@@ -95,7 +95,7 @@ export function renderStep4(container) {
 
       const data = await res.json();
 
-      if (res.ok || res.status === 409) {
+      if (res.ok) {
         localStorage.setItem('zenkai_submitted_wallet', address);
         navigate('/step5');
       } else {

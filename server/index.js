@@ -8,8 +8,6 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb, initDb } from './db.js';
-import { signToken, requireAuth } from './auth.js';
-import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
@@ -89,17 +87,11 @@ app.post('/api/wallets', async (req, res) => {
         INSERT INTO wallets (address, handle)
         VALUES (${normalizedAddress}, ${cleanHandle || null})
       `;
-            return res.json({ success: true, message: 'Wallet added to allowlist' });
         } catch (err) {
-            // Unique constraint violation
-            if (err.code === '23505' || (err.message && err.message.includes('unique'))) {
-                return res.status(409).json({
-                    error: 'duplicate',
-                    message: 'Wallet already on allowlist',
-                });
-            }
-            throw err;
+            // Ignore unique constraint violations — treat re-submission as success
+            if (err.code !== '23505' && !(err.message && err.message.includes('unique'))) throw err;
         }
+        return res.json({ success: true, message: 'Wallet added to allowlist' });
     } catch (err) {
         console.error('Error submitting wallet:', err);
         res.status(500).json({ error: 'server', message: 'Internal server error' });
@@ -126,13 +118,11 @@ app.post('/api/allowlist', async (req, res) => {
 
         try {
             await sql`INSERT INTO allowlist_fcfs (address, handle, ip, user_agent) VALUES (${normalizedAddress}, ${cleanHandle}, ${clientIp}, ${userAgent})`;
-            return res.json({ success: true, message: 'Wallet added to FCFS allowlist' });
         } catch (err) {
-            if (err.code === '23505' || (err.message && err.message.includes('unique'))) {
-                return res.status(409).json({ error: 'duplicate', message: 'Wallet already on allowlist' });
-            }
-            throw err;
+            // Ignore unique constraint violations — treat re-submission as success
+            if (err.code !== '23505' && !(err.message && err.message.includes('unique'))) throw err;
         }
+        return res.json({ success: true, message: 'Wallet added to FCFS allowlist' });
     } catch (err) {
         console.error('Error submitting to allowlist:', err);
         res.status(500).json({ error: 'server', message: 'Internal server error' });
@@ -203,234 +193,6 @@ app.get('/api/wallets', async (req, res) => {
     } catch (err) {
         console.error('Error listing wallets:', err);
         res.status(500).json({ error: 'server', message: 'Failed to list wallets' });
-    }
-});
-
-// ──────────────────────────────────────────────────
-// AUTH ROUTES
-// ──────────────────────────────────────────────────
-
-function makeReferralCode() {
-    return Math.random().toString(36).slice(2, 8).toUpperCase() +
-           Math.random().toString(36).slice(2, 6).toUpperCase();
-}
-
-// ── POST /api/auth/signup ──
-app.post('/api/auth/signup', async (req, res) => {
-    try {
-        const { username, referralCode } = req.body;
-        const GMAIL_RE = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i;
-        if (!username || !GMAIL_RE.test(username.trim()))
-            return res.status(400).json({ error: 'invalid', message: 'Please enter a valid Gmail address (@gmail.com)' });
-
-        const cleanUsername = username.trim().toLowerCase();
-
-        const sql = getDb();
-        const existing = await sql`SELECT id FROM users WHERE username = ${cleanUsername}`;
-        if (existing.length > 0)
-            return res.status(409).json({ error: 'duplicate', message: 'An account with this Gmail already exists' });
-
-        const hash = 'email_only';
-        let refCode = makeReferralCode();
-        // Ensure uniqueness
-        while ((await sql`SELECT id FROM users WHERE referral_code = ${refCode}`).length > 0)
-            refCode = makeReferralCode();
-
-        let referrerId = null;
-        if (referralCode) {
-            const referrer = await sql`SELECT id FROM users WHERE referral_code = ${referralCode.toUpperCase()}`;
-            if (referrer.length > 0) referrerId = referrer[0].id;
-        }
-
-        const [user] = await sql`
-            INSERT INTO users (username, password_hash, referral_code, referred_by)
-            VALUES (${cleanUsername}, ${hash}, ${refCode}, ${referrerId})
-            RETURNING id, username, referral_code, x_handle, spot_type, extra_spins, completed_at
-        `;
-
-        const token = signToken({ id: user.id, username: user.username });
-        return res.json({ token, user });
-    } catch (err) {
-        console.error('[signup]', err);
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── POST /api/auth/login ──
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username } = req.body;
-        if (!username)
-            return res.status(400).json({ error: 'invalid', message: 'Gmail is required' });
-
-        const cleanUsername = username.trim().toLowerCase();
-        const sql = getDb();
-        const rows = await sql`SELECT * FROM users WHERE username = ${cleanUsername}`;
-        if (rows.length === 0)
-            return res.status(401).json({ error: 'auth', message: 'No account found with this Gmail' });
-
-        const user = rows[0];
-
-        const token = signToken({ id: user.id, username: user.username });
-        return res.json({
-            token,
-            user: {
-                id: user.id, username: user.username,
-                referral_code: user.referral_code,
-                x_handle: user.x_handle, spot_type: user.spot_type,
-                extra_spins: user.extra_spins, completed_at: user.completed_at,
-            },
-        });
-    } catch (err) {
-        console.error('[login]', err);
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── GET /api/auth/me ──
-app.get('/api/auth/me', requireAuth, async (req, res) => {
-    try {
-        const sql = getDb();
-        const rows = await sql`
-            SELECT id, username, referral_code, x_handle, spot_type,
-                   extra_spins, completed_at, created_at, spins_used, best_result FROM users WHERE id = ${req.user.id}
-        `;
-        if (rows.length === 0) return res.status(404).json({ error: 'not_found', message: 'User not found' });
-        const user = rows[0];
-        // Look up submitted wallet from allowlist tables (by handle)
-        let submittedWallet = null;
-        if (user.x_handle) {
-            const walletRows = await sql`
-                SELECT address FROM (
-                    SELECT address, created_at FROM allowlist_gtd  WHERE handle = ${user.x_handle}
-                    UNION ALL
-                    SELECT address, created_at FROM allowlist_fcfs WHERE handle = ${user.x_handle}
-                ) sub ORDER BY created_at DESC LIMIT 1
-            `;
-            submittedWallet = walletRows[0]?.address || null;
-        }
-        res.json({ user: { ...user, submitted_wallet: submittedWallet } });
-    } catch (err) {
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── POST /api/auth/complete — Save x_handle + spot_type after completing the flow ──
-// Upgrade-only via single atomic SQL: maps tiers to integers (gtd=1, fcfs=2, fail=3, null=4),
-// takes LEAST(), maps back. Never downgrades in a single round-trip (no read-then-write race).
-app.post('/api/auth/complete', requireAuth, async (req, res) => {
-    try {
-        const { xHandle, spotType } = req.body;
-        if (!['gtd', 'fcfs', 'fail'].includes(spotType))
-            return res.status(400).json({ error: 'invalid', message: 'Invalid spot type' });
-
-        const sql = getDb();
-        const handle = (xHandle || '').trim().slice(0, 100) || null;
-
-        // Snapshot state BEFORE update so we know if this is first completion
-        const [prev] = await sql`SELECT completed_at, referred_by, referral_credited FROM users WHERE id = ${req.user.id}`;
-        const isFirstCompletion = !prev?.completed_at;
-
-        // Single atomic UPDATE — no separate SELECT needed.
-        // Rank: gtd=1, fcfs=2, fail=3, NULL→4 (worst). LEAST picks best tier.
-        const [user] = await sql`
-            UPDATE users
-            SET
-                x_handle     = COALESCE(${handle}, x_handle),
-                completed_at = COALESCE(completed_at, NOW()),
-                spot_type    = CASE LEAST(
-                    COALESCE(
-                        CASE spot_type
-                            WHEN 'gtd'  THEN 1
-                            WHEN 'fcfs' THEN 2
-                            WHEN 'fail' THEN 3
-                            ELSE 4
-                        END,
-                        4
-                    ),
-                    CASE ${spotType}::text
-                        WHEN 'gtd'  THEN 1
-                        WHEN 'fcfs' THEN 2
-                        WHEN 'fail' THEN 3
-                        ELSE 4
-                    END
-                )
-                    WHEN 1 THEN 'gtd'
-                    WHEN 2 THEN 'fcfs'
-                    WHEN 3 THEN 'fail'
-                    ELSE        'fail'
-                END
-            WHERE id = ${req.user.id}
-            RETURNING id, username, referral_code, x_handle, spot_type, extra_spins, completed_at
-        `;
-
-        // Credit referrer +1 spin on the referred user's first ever spin completion
-        if (isFirstCompletion && prev?.referred_by && !prev?.referral_credited) {
-            await sql`UPDATE users SET extra_spins = LEAST(extra_spins + 1, 10) WHERE id = ${prev.referred_by}`;
-            await sql`UPDATE users SET referral_credited = TRUE WHERE id = ${req.user.id}`;
-        }
-
-        res.json({ user });
-    } catch (err) {
-        console.error('[complete]', err);
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── POST /api/auth/save-spin — Record spin result after each spin ──
-app.post('/api/auth/save-spin', requireAuth, async (req, res) => {
-    try {
-        const { spinsUsed, bestResult } = req.body;
-        if (typeof spinsUsed !== 'number' || spinsUsed < 0 || spinsUsed > 10)
-            return res.status(400).json({ error: 'invalid', message: 'Invalid spins_used' });
-        if (bestResult && !['gtd', 'fcfs', 'fail'].includes(bestResult))
-            return res.status(400).json({ error: 'invalid', message: 'Invalid best_result' });
-
-        const sql = getDb();
-        const [user] = await sql`
-            UPDATE users
-            SET spins_used = ${spinsUsed}, best_result = ${bestResult || null}
-            WHERE id = ${req.user.id}
-            RETURNING spins_used, best_result
-        `;
-        res.json({ spins_used: user.spins_used, best_result: user.best_result });
-    } catch (err) {
-        console.error('[save-spin]', err);
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── POST /api/auth/extra-spin — Consume one extra spin ──
-app.post('/api/auth/extra-spin', requireAuth, async (req, res) => {
-    try {
-        const sql = getDb();
-        const rows = await sql`SELECT extra_spins FROM users WHERE id = ${req.user.id}`;
-        if (!rows.length || rows[0].extra_spins < 1)
-            return res.status(400).json({ error: 'none', message: 'No extra spins remaining' });
-        // Deduct spin AND reset spin session so the user gets exactly 1 fresh spin
-        const [user] = await sql`
-            UPDATE users
-            SET extra_spins = extra_spins - 1,
-                spins_used  = 1,
-                best_result = NULL
-            WHERE id = ${req.user.id}
-            RETURNING extra_spins, spins_used, best_result
-        `;
-        res.json({ extra_spins: user.extra_spins, spins_used: user.spins_used, best_result: user.best_result });
-    } catch (err) {
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
-    }
-});
-
-// ── GET /api/referral/:code — Validate a referral code ──
-app.get('/api/referral/:code', async (req, res) => {
-    try {
-        const sql = getDb();
-        const rows = await sql`SELECT id, username FROM users WHERE referral_code = ${req.params.code.toUpperCase()}`;
-        if (rows.length === 0) return res.status(404).json({ error: 'not_found', message: 'Invalid referral code' });
-        res.json({ valid: true, referrer: rows[0].username });
-    } catch (err) {
-        res.status(500).json({ error: 'server', message: 'Internal server error' });
     }
 });
 
