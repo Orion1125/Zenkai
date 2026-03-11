@@ -109,7 +109,7 @@ app.post('/api/allowlist', async (req, res) => {
             return res.status(400).json({ error: 'invalid', message: 'Invalid Ethereum address' });
         }
         if (!['fcfs'].includes(tier)) {
-            return res.status(400).json({ error: 'invalid', message: 'GTD submissions are closed. Only FCFS is available.' });
+            return res.status(400).json({ error: 'invalid', message: 'Submissions are currently unavailable.' });
         }
 
         const normalizedAddress = address.toLowerCase();
@@ -122,7 +122,7 @@ app.post('/api/allowlist', async (req, res) => {
             // Ignore unique constraint violations — treat re-submission as success
             if (err.code !== '23505' && !(err.message && err.message.includes('unique'))) throw err;
         }
-        return res.json({ success: true, message: 'Wallet added to FCFS allowlist' });
+        return res.json({ success: true, message: 'Wallet added to allowlist' });
     } catch (err) {
         console.error('Error submitting to allowlist:', err);
         res.status(500).json({ error: 'server', message: 'Internal server error' });
