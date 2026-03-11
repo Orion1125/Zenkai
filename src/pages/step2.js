@@ -15,12 +15,12 @@ export function renderStep2(container) {
     {
       id: 'rt',
       icon: '',
-      label: 'Like and Retweet <a href="https://x.com/zenkai_eth/status/2029529852752089267" target="_blank" rel="noopener">this post</a> and tag 2 friends',
+      label: 'Like and Retweet <a href="https://x.com/zenkai_eth/status/2031739073694454013" target="_blank" rel="noopener">this post</a> and tag 2 friends',
     },
     {
       id: 'quote',
       icon: '',
-      label: 'Quote <a href="https://x.com/zenkai_eth/status/2029529852752089267" target="_blank" rel="noopener">this post</a> (caption "zenkai") and paste the link below',
+      label: 'Quote <a href="https://x.com/zenkai_eth/status/2031739073694454013" target="_blank" rel="noopener">this post</a> (caption "zenkai") and paste the link below',
     },
   ];
 

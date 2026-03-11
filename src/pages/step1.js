@@ -1,9 +1,7 @@
 // ZENKAI — Step 1: X Username Entry
 import { navigate } from '../router.js';
-import { getToken } from '../auth.js';
 
 export function renderStep1(container) {
-  if (!getToken()) { navigate('/signup'); return; }
   const el = document.createElement('div');
   el.className = 'card';
   el.innerHTML = `
