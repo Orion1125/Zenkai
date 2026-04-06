@@ -1,15 +1,16 @@
 import './style.css';
-import { initScene } from './scene.js';
+import './game.css';
+import { initScene }                       from './scene.js';
 import { registerRoute, navigate, initRouter } from './router.js';
-import { renderLogin } from './pages/login.js';
-import { renderStep1 } from './pages/step1.js';
-import { renderStep5 } from './pages/step5.js';
+import { renderConnect }                   from './pages/connect.js';
+import { renderCard }                      from './pages/card.js';
+import { renderArena }                     from './pages/arena.js';
 
 initScene();
 
-registerRoute('/', () => navigate('/login'));
-registerRoute('/login', renderLogin);
-registerRoute('/step1', renderStep1);
-registerRoute('/step5', renderStep5);
+registerRoute('/',       () => navigate('/connect'));
+registerRoute('/connect', renderConnect);
+registerRoute('/card',    renderCard);
+registerRoute('/arena',   renderArena);
 
 initRouter();
