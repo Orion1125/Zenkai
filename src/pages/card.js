@@ -146,21 +146,20 @@ export async function renderCard(app) {
   const nfts = await fetchNFTs(address);
 
   if (nfts.length === 0) {
-    const demoImages = [
-      '/77f70ec7-eb8e-44ed-9aee-af98932591af.jpg',
-      '/9c0a9206-d63d-4d34-bc9b-4188eb44dee3.jpg',
-    ];
-    const demoId = parseInt(address.slice(-6), 16) || 1;
-    const demo   = {
-      tokenId:  String(demoId % 9999 + 1),
-      name:     'ZENKAI WARRIOR',
-      image:    demoImages[demoId % demoImages.length],
-      contract: '',
-      owner:    address,
-      level: 1, xp: 0,
-    };
-    content.innerHTML = `<p class="step-tagline" style="color:var(--red-bright);font-size:0.72rem">No NFTs found — showing demo card.<br>Add <code>VITE_ALCHEMY_KEY</code> to load real NFTs.</p>`;
-    setTimeout(() => showReveal(content, demo, address, true), 800);
+    content.innerHTML = `
+      <div class="no-nft-wrap">
+        <div class="no-nft-icon">✕</div>
+        <h3 class="no-nft-title">NO ZENKAI NFT FOUND</h3>
+        <p class="no-nft-msg">This wallet doesn't hold a Zenkai NFT.<br>Please purchase one and try again.</p>
+        <a class="btn-gold" href="https://opensea.io/collection/zenkai" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;margin-top:4px">GET YOUR NFT</a>
+        <button class="btn-ghost" id="btn-disc">DISCONNECT</button>
+      </div>
+    `;
+    content.querySelector('#btn-disc').addEventListener('click', () => {
+      localStorage.removeItem('zenkai_wallet');
+      localStorage.removeItem('zenkai_card');
+      navigate('/');
+    });
     return;
   }
 

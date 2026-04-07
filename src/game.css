@@ -620,3 +620,36 @@
 
   .battle-log { max-width: 100%; }
 }
+
+/* ── No NFT state ── */
+.no-nft-wrap {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.no-nft-icon {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--red-bright);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem;
+  color: var(--red-bright);
+  box-shadow: 0 0 20px var(--red-glow);
+}
+
+.no-nft-title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 3px;
+  color: var(--red-bright);
+  margin: 0;
+}
+
+.no-nft-msg {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+  margin: 0;
+}
