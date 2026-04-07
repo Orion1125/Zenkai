@@ -1,19 +1,13 @@
 // ══════════════════════════════════════════════
-// ZENKAI — Wallet connection via Web3Modal
-// WalletConnect + MetaMask + injected wallets
+// ZENKAI — Wallet connection via Reown AppKit
+// WalletConnect + MetaMask + Coinbase + injected
 // ══════════════════════════════════════════════
 
-import { createWeb3Modal, defaultConfig } from '@web3modal/ethers';
+import { createAppKit } from '@reown/appkit';
+import { EthersAdapter } from '@reown/appkit-adapter-ethers';
+import { mainnet } from '@reown/appkit/networks';
 
 const PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || '';
-
-const MAINNET = {
-  chainId:  1,
-  name:     'Ethereum',
-  currency: 'ETH',
-  explorerUrl: 'https://etherscan.io',
-  rpcUrl:   'https://cloudflare-eth.com',
-};
 
 const metadata = {
   name:        'ZENKAI',
@@ -22,60 +16,62 @@ const metadata = {
   icons:       [],
 };
 
-let modal = null;
+// Initialize AppKit eagerly so web components register before user clicks
+const modal = createAppKit({
+  adapters:  [new EthersAdapter()],
+  networks:  [mainnet],
+  projectId: PROJECT_ID,
+  metadata,
+  themeMode: 'dark',
+  themeVariables: {
+    '--w3m-accent': '#FFD000',
+  },
+});
 
-function getModal() {
-  if (modal) return modal;
-  modal = createWeb3Modal({
-    ethersConfig: defaultConfig({ metadata }),
-    chains:       [MAINNET],
-    projectId:    PROJECT_ID,
-    themeMode:    'dark',
-    themeVariables: {
-      '--w3m-accent': '#FFD000',
-    },
-  });
-  return modal;
-}
-
-/** Open the WalletConnect / MetaMask modal and return a lowercase address */
+/** Open the wallet modal and return a lowercase address */
 export async function connectWallet() {
-  const m = getModal();
-  await m.open();
+  await modal.open();
 
-  // Wait for the user to connect (watch provider state)
   return new Promise((resolve, reject) => {
-    const unsub = m.subscribeProvider(({ address, isConnected }) => {
-      if (isConnected && address) {
-        unsub();
-        resolve(address.toLowerCase());
+    let resolved = false;
+
+    const unsub = modal.subscribeEvents((event) => {
+      if (resolved) return;
+      if (event.data?.event === 'CONNECT_SUCCESS' || event.data?.event === 'MODAL_CLOSE') {
+        const addr = modal.getAddress();
+        if (addr) {
+          resolved = true;
+          unsub?.();
+          resolve(addr.toLowerCase());
+        }
       }
     });
 
-    // Also resolve immediately if already connected
-    const state = m.getState();
-    if (state.selectedNetworkId && m.getAddress()) {
-      unsub();
-      resolve(m.getAddress().toLowerCase());
+    // Already connected — resolve immediately
+    const addr = modal.getAddress();
+    if (addr) {
+      resolved = true;
+      unsub?.();
+      resolve(addr.toLowerCase());
     }
 
-    // Reject after 2 minutes of no connection
     setTimeout(() => {
-      unsub();
-      reject(new Error('Connection timeout'));
+      if (!resolved) {
+        resolved = true;
+        unsub?.();
+        reject(new Error('Connection timeout'));
+      }
     }, 120_000);
   });
 }
 
 /** Disconnect wallet */
 export async function disconnectWallet() {
-  const m = getModal();
-  await m.disconnect();
+  await modal.disconnect();
 }
 
 /** Get currently connected address (or null) */
 export function getConnectedAddress() {
-  if (!modal) return null;
   try {
     const addr = modal.getAddress();
     return addr ? addr.toLowerCase() : null;
