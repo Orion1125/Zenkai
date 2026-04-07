@@ -99,7 +99,7 @@ export function buildCardHTML(card) {
     <div class="zk-card ${stats.rarity === 'LEGENDARY' ? 'zk-legendary' : stats.rarity === 'EPIC' ? 'zk-epic' : ''}" data-token="${esc(String(card.tokenId))}" data-element="${esc(stats.element)}">
       <div class="zk-card-shine"></div>
       <div class="zk-card-header">
-        <span class="zk-card-id">ZKN #${esc(String(card.tokenId).padStart(4, '0'))}</span>
+        <a class="zk-card-id" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${card.tokenId}" target="_blank" rel="noopener">ZKN #${esc(String(card.tokenId).padStart(4, '0'))}</a>
         <span class="zk-card-rarity" style="color:${rColor}">${esc(stats.rarity)}</span>
       </div>
       <div class="zk-card-art-wrap">
@@ -110,7 +110,7 @@ export function buildCardHTML(card) {
         <div class="zk-card-art-overlay"></div>
       </div>
       <div class="zk-card-body">
-        <div class="zk-card-name">${esc(card.name)}</div>
+        <a class="zk-card-name" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${card.tokenId}" target="_blank" rel="noopener">${esc(card.name)}</a>
         <div class="zk-card-meta">${elemBadge}${abilityTag}</div>
         <div class="zk-stats">
           <div class="zk-stat pwr">
@@ -182,7 +182,7 @@ export async function renderCard(app) {
         <div class="no-nft-icon">✕</div>
         <h3 class="no-nft-title">NO ZENKAI NFT FOUND</h3>
         <p class="no-nft-msg">This wallet doesn't hold a Zenkai NFT.<br>Please purchase one and try again.</p>
-        <a class="btn-gold" href="https://opensea.io/collection/zenkai" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;margin-top:4px">GET YOUR NFT</a>
+        <a class="btn-gold" href="https://opensea.io/collection/zenkai-eth" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;margin-top:4px">GET YOUR NFT</a>
         <button class="btn-ghost" id="btn-disc">DISCONNECT</button>
       </div>
     `;

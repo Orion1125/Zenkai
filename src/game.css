@@ -166,6 +166,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 8px;
+  text-decoration: none;
+  display: block;
+}
+a.zk-card-name:hover,
+a.zk-card-id:hover {
+  color: var(--gold);
+}
+a.zk-card-id {
+  text-decoration: none;
+  color: inherit;
 }
 
 .zk-stats {
