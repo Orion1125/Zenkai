@@ -622,19 +622,31 @@ a.zk-card-id {
 }
 
 /* ══════════════════════════════════════════════
-   HOME PAGE
+   HOME PAGE — Desktop-first responsive layout
    ══════════════════════════════════════════════ */
 
 .home-page {
-  max-width: 380px;
-  padding-bottom: 24px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+  animation: fadeSlideUp 0.4s ease-out;
 }
 
-.home-top {
+/* Top bar */
+.home-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.home-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .home-logo {
@@ -650,7 +662,7 @@ a.zk-card-id {
   background: rgba(0,225,162,0.08);
   border: 1px solid rgba(0,225,162,0.2);
   border-radius: 20px;
-  padding: 4px 10px 4px 8px;
+  padding: 5px 12px 5px 9px;
 }
 
 .home-status-dot {
@@ -668,18 +680,52 @@ a.zk-card-id {
 
 .home-addr {
   font-family: var(--font-body);
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: rgba(0,225,162,0.85);
 }
 
-/* Quick stats banner */
+.home-disconnect {
+  width: auto !important;
+  padding: 6px 14px !important;
+  font-size: 0.6rem !important;
+}
+
+/* ── Dashboard grid: sidebar + main ── */
+.home-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+/* Sidebar */
+.home-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(255,255,255,0.015);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.home-card-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.home-card-wrap .zk-card {
+  width: 100%;
+  max-width: 200px;
+}
+
+/* Quick stats */
 .home-stats-banner {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-bottom: 12px;
 }
 
 .home-qstat {
@@ -707,12 +753,11 @@ a.zk-card-id {
   text-transform: uppercase;
 }
 
-/* XP progress bar */
+/* XP bar */
 .home-xp-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
 .home-xp-track {
@@ -737,143 +782,6 @@ a.zk-card-id {
   flex-shrink: 0;
 }
 
-/* Card display */
-.home-card-wrap {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 16px;
-}
-
-.home-card-wrap .zk-card {
-  width: 170px;
-}
-
-/* Nav grid */
-.home-nav {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.home-nav-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 14px 8px 12px;
-  background: rgba(255,208,0,0.04);
-  border: 1px solid rgba(255,208,0,0.12);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s, transform 0.15s;
-  color: inherit;
-}
-
-.home-nav-btn.home-nav-primary {
-  border-color: rgba(255,208,0,0.25);
-  background: rgba(255,208,0,0.07);
-}
-
-.home-nav-btn:hover {
-  border-color: rgba(255,208,0,0.35);
-  background: rgba(255,208,0,0.08);
-  transform: translateY(-2px);
-}
-
-.home-nav-btn:active {
-  transform: translateY(0);
-}
-
-.home-nav-icon {
-  font-size: 1.3rem;
-  line-height: 1;
-}
-
-.home-nav-label {
-  font-family: var(--font-display);
-  font-size: 0.68rem;
-  letter-spacing: 2px;
-  color: var(--gold);
-}
-
-.home-nav-desc {
-  font-size: 0.55rem;
-  color: var(--text-dim);
-  letter-spacing: 0.5px;
-}
-
-/* Sections */
-.home-section {
-  margin-bottom: 14px;
-}
-
-.home-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.home-section-title {
-  font-family: var(--font-display);
-  font-size: 0.62rem;
-  letter-spacing: 3px;
-  color: var(--text-muted);
-}
-
-.home-section-badge {
-  font-size: 0.48rem;
-  letter-spacing: 2px;
-  font-weight: 700;
-  color: #00e1a2;
-  background: rgba(0,225,162,0.1);
-  border: 1px solid rgba(0,225,162,0.2);
-  border-radius: 3px;
-  padding: 2px 6px;
-  animation: dotPulse 2s ease-in-out infinite;
-}
-
-/* Activity feed */
-.home-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.home-feed-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  background: rgba(255,255,255,0.02);
-  border: 1px solid rgba(255,255,255,0.05);
-  border-radius: 5px;
-  font-size: 0.72rem;
-}
-
-.home-feed-item.feed-dim {
-  opacity: 0.5;
-}
-
-.feed-icon {
-  font-size: 0.8rem;
-  flex-shrink: 0;
-}
-
-.feed-text {
-  flex: 1;
-  color: var(--text-muted);
-  letter-spacing: 0.3px;
-}
-
-.feed-time {
-  font-size: 0.55rem;
-  color: var(--text-dim);
-  letter-spacing: 0.5px;
-  flex-shrink: 0;
-}
-
 /* Season bar */
 .home-season-bar {
   display: flex;
@@ -881,7 +789,6 @@ a.zk-card-id {
   justify-content: center;
   gap: 6px;
   padding: 8px;
-  margin-bottom: 10px;
   background: rgba(255,208,0,0.03);
   border: 1px solid rgba(255,208,0,0.08);
   border-radius: 6px;
@@ -905,9 +812,189 @@ a.zk-card-id {
   color: var(--text-dim);
 }
 
-.home-disconnect {
-  width: 100%;
-  margin-top: 4px;
+/* ── Main content area ── */
+.home-main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Nav grid */
+.home-nav {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.home-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 10px 16px;
+  background: rgba(255,208,0,0.04);
+  border: 1px solid rgba(255,208,0,0.12);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  color: inherit;
+}
+
+.home-nav-btn.home-nav-primary {
+  border-color: rgba(255,208,0,0.25);
+  background: rgba(255,208,0,0.07);
+}
+
+.home-nav-btn:hover {
+  border-color: rgba(255,208,0,0.4);
+  background: rgba(255,208,0,0.1);
+  transform: translateY(-3px);
+}
+
+.home-nav-btn:active {
+  transform: translateY(0);
+}
+
+.home-nav-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.home-nav-label {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 2px;
+  color: var(--gold);
+}
+
+.home-nav-desc {
+  font-size: 0.58rem;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+/* Sections */
+.home-section {
+  background: rgba(255,255,255,0.015);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.home-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.home-section-title {
+  font-family: var(--font-display);
+  font-size: 0.65rem;
+  letter-spacing: 3px;
+  color: var(--text-muted);
+}
+
+.home-section-badge {
+  font-size: 0.5rem;
+  letter-spacing: 2px;
+  font-weight: 700;
+  color: #00e1a2;
+  background: rgba(0,225,162,0.1);
+  border: 1px solid rgba(0,225,162,0.2);
+  border-radius: 3px;
+  padding: 2px 8px;
+  animation: dotPulse 2s ease-in-out infinite;
+}
+
+/* Activity feed */
+.home-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
+.home-feed-item.feed-dim {
+  opacity: 0.5;
+}
+
+.feed-icon {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.feed-text {
+  flex: 1;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+.feed-time {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+/* ── Mobile: stack everything ── */
+@media (max-width: 680px) {
+  .home-page {
+    padding: 14px;
+  }
+
+  .home-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .home-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .home-card-wrap {
+    flex: 0 0 auto;
+  }
+
+  .home-card-wrap .zk-card {
+    width: 140px;
+  }
+
+  .home-stats-banner {
+    flex: 1;
+    min-width: 160px;
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .home-xp-row {
+    width: 100%;
+  }
+
+  .home-season-bar {
+    width: 100%;
+  }
+
+  .home-nav {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .home-topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
 }
 
 /* ══════════════════════════════════════════════
