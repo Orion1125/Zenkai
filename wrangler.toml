@@ -1,12 +1,12 @@
-name            = "zenkai-api"
-main            = "worker/index.js"
+name               = "zenkai-api"
+main               = "worker/index.js"
 compatibility_date = "2024-09-23"
-account_id      = ""   # fill in: wrangler whoami
+account_id         = "8ece8c4b491bd8acb32caea98348c56d"
 
 [[d1_databases]]
-binding      = "DB"
+binding       = "DB"
 database_name = "zenkai"
-database_id  = ""      # fill in after: wrangler d1 create zenkai
+database_id   = "8141156f-1c18-4d95-bf14-c53ebc29f624"
 
 [vars]
 ENVIRONMENT = "production"
