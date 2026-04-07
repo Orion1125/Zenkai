@@ -516,17 +516,36 @@ async function handleQueueStatus(address, env) {
 
   if (battle) {
     const isP1   = battle.player1 === address;
-    const winner = battle.winner === address ? 'won' : battle.winner === null ? 'draw' : 'lost';
+    const won    = battle.winner === address;
+    const draw   = battle.winner === null;
+    // Return 'p1'/'p2'/'draw' relative to the polling player (they are always "p1" from their perspective)
+    const winner = won ? 'p1' : draw ? 'draw' : 'p2';
+
+    const myCard = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(address).first();
+
+    // Rounds are stored relative to the POST caller (player1 in DB).
+    // If the polling player was player2, swap p1/p2 in rounds so "p1" always means "me".
+    let rounds = JSON.parse(battle.rounds);
+    if (!isP1) {
+      rounds = rounds.map(r => ({
+        ...r,
+        p1: r.p2,
+        p2: r.p1,
+        result: r.result === 'p1' ? 'p2' : r.result === 'p2' ? 'p1' : r.result,
+      }));
+    }
+
     return json({
       status:  'matched',
       battleId: battle.id,
-      rounds:  JSON.parse(battle.rounds),
+      rounds,
       winner,
-      isP1,
+      won,
       opponent: {
         address: isP1 ? battle.player2 : battle.player1,
         card:    JSON.parse(isP1 ? battle.p2_card : battle.p1_card),
       },
+      card: myCard,
     });
   }
 
