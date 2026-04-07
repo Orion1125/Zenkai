@@ -49,8 +49,7 @@ async function fetchNFTs(address) {
 
   const buildUrl = (chain) => {
     let url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
-      + `?owner=${address}&withMetadata=true&pageSize=50`
-      + `&includeFilters[]=SPAM`;          // include everything, don't auto-filter
+      + `?owner=${address}&withMetadata=true&pageSize=50`;
     if (NFT_CONTRACT) url += `&contractAddresses[]=${NFT_CONTRACT}`;
     return url;
   };
