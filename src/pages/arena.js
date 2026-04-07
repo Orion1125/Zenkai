@@ -5,6 +5,9 @@
 import { navigate }              from '../router.js';
 import { buildCardHTML, buildCardBack, deriveStats } from './card.js';
 import { playBattleHit, playVictory, playDefeat }   from '../sound.js';
+import { syncCard, enterQueue, pollQueue }           from '../api.js';
+
+const HAS_SERVER = !!import.meta.env.VITE_API_URL;
 
 // ── Opponent pool ────────────────────────────────────────────────────────────
 const OPPONENTS = [
@@ -103,6 +106,126 @@ export function renderArena(app) {
 
 // ── Battle sequence ──────────────────────────────────────────────────────────
 async function startBattle(wrap, myCard, address) {
+  if (HAS_SERVER) return startBattleServer(wrap, myCard, address);
+  return startBattleLocal(wrap, myCard, address);
+}
+
+async function startBattleServer(wrap, myCard, address) {
+  const btn     = wrap.querySelector('#btn-battle');
+  const log     = wrap.querySelector('#battle-log');
+  const slotOpp = wrap.querySelector('#slot-opponent');
+  const slotMe  = wrap.querySelector('#slot-player');
+
+  btn.disabled    = true;
+  btn.textContent = 'SEARCHING…';
+  log.innerHTML   = '';
+
+  // Sync card with server first
+  await syncCard(address, myCard);
+
+  // Enter queue — poll until matched
+  let result = await enterQueue(address, myCard);
+
+  if (result.status === 'waiting') {
+    // Poll every 2s for up to 30s
+    let tries = 0;
+    while (result.status === 'waiting' && tries < 15) {
+      await wait(2000);
+      tries++;
+      result = await pollQueue(address);
+    }
+  }
+
+  if (result.status !== 'matched') {
+    btn.disabled    = false;
+    btn.textContent = 'FIND BATTLE';
+    const msg = document.createElement('div');
+    msg.className = 'battle-round round-draw';
+    msg.textContent = 'No opponent found. Try again.';
+    log.appendChild(msg);
+    return;
+  }
+
+  // Reveal opponent
+  const opp    = { ...result.opponent.card, level: result.opponent.card?.level || 1, xp: result.opponent.card?.xp || 0 };
+  btn.textContent = 'OPPONENT FOUND!';
+  slotOpp.innerHTML = `<div class="arena-slot-label">OPPONENT</div>${buildCardHTML(opp)}`;
+  slotOpp.querySelector('.zk-card').classList.add('zk-reveal-anim');
+
+  await wait(1000);
+
+  // Animate rounds from server result
+  let myWins = 0, oppWins = 0;
+  const meCard  = slotMe.querySelector('.zk-card');
+  const oppCard = slotOpp.querySelector('.zk-card');
+
+  for (const round of result.rounds) {
+    await wait(800);
+    const res = round.result;
+    playBattleHit();
+
+    if (res === 'p1') {
+      myWins++;
+      meCard.classList.add('card-hit-win'); oppCard.classList.add('card-hit-lose');
+      setTimeout(() => { meCard.classList.remove('card-hit-win'); oppCard.classList.remove('card-hit-lose'); }, 500);
+    } else if (res === 'p2') {
+      oppWins++;
+      oppCard.classList.add('card-hit-win'); meCard.classList.add('card-hit-lose');
+      setTimeout(() => { oppCard.classList.remove('card-hit-win'); meCard.classList.remove('card-hit-lose'); }, 500);
+    }
+
+    const roundEl = document.createElement('div');
+    roundEl.className = `battle-round ${res === 'p1' ? 'round-win' : res === 'p2' ? 'round-lose' : 'round-draw'}`;
+    roundEl.innerHTML = `
+      <span class="round-label">${round.stat}</span>
+      <span class="round-me">${round.p1}</span>
+      <span class="round-vs">vs</span>
+      <span class="round-opp">${round.p2}</span>
+      <span class="round-result">${res === 'p1' ? '▶ YOU WIN' : res === 'p2' ? '▶ OPP WINS' : '— DRAW'}</span>
+    `;
+    log.appendChild(roundEl);
+  }
+
+  await wait(800);
+
+  const won  = result.winner === 'p1';
+  const draw = result.winner === 'draw';
+
+  if (won) playVictory(); else if (!draw) playDefeat();
+
+  // Update local card state from server
+  if (result.card) {
+    myCard.level = result.card.level;
+    myCard.xp    = result.card.xp;
+    localStorage.setItem('zenkai_card', JSON.stringify(myCard));
+  }
+
+  const wins   = result.card?.wins   ?? parseInt(localStorage.getItem('zenkai_wins')   || '0');
+  const losses = result.card?.losses ?? parseInt(localStorage.getItem('zenkai_losses') || '0');
+
+  const resultEl = document.createElement('div');
+  resultEl.className = `battle-final ${won ? 'final-win' : draw ? 'final-draw' : 'final-lose'}`;
+  resultEl.innerHTML = won
+    ? `<span class="final-text">VICTORY</span><span class="final-xp">+50 XP</span>`
+    : draw
+    ? `<span class="final-text">DRAW</span><span class="final-xp">+0 XP</span>`
+    : `<span class="final-text">DEFEAT</span><span class="final-xp">+10 XP</span>`;
+  log.appendChild(resultEl);
+
+  wrap.querySelector('#arena-record').innerHTML =
+    `<span class="record-label">RECORD</span>
+     <span class="record-wins">${wins}W</span>
+     <span class="record-sep">/</span>
+     <span class="record-losses">${losses}L</span>`;
+
+  slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
+
+  btn.disabled    = false;
+  btn.textContent = 'BATTLE AGAIN';
+  btn.onclick = () => { log.innerHTML = ''; startBattle(wrap, myCard, address); };
+}
+
+async function startBattleLocal(wrap, myCard, address) {
   const btn       = wrap.querySelector('#btn-battle');
   const log       = wrap.querySelector('#battle-log');
   const slotOpp   = wrap.querySelector('#slot-opponent');

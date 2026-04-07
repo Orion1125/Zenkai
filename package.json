@@ -5,14 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "node server/index.js",
     "build": "vite build",
-    "render-build": "npm install && npm run build",
-    "start": "node server/index.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev worker/index.js",
+    "worker:deploy": "wrangler deploy",
+    "worker:db:init": "wrangler d1 execute zenkai --file=worker/schema.sql",
+    "worker:db:init:remote": "wrangler d1 execute zenkai --remote --file=worker/schema.sql"
   },
   "devDependencies": {
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "wrangler": "^3.101.0"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

@@ -1,16 +1,22 @@
 # ══════════════════════════════════════════════
-# Zenkai — Render Blueprint
+# Zenkai — Render Blueprint (static site only)
+# Server has moved to Cloudflare Workers.
 # ══════════════════════════════════════════════
 
 services:
   - type: web
-    name: zenkai
-    runtime: node
-    plan: free
-    buildCommand: npm run render-build
-    startCommand: npm run start
+    name: zenkai-client
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
     envVars:
-      - key: DATABASE_URL
-        sync: true  # set manually in Render dashboard
-      - key: NODE_ENV
-        value: production
+      - key: VITE_ALCHEMY_KEY
+        sync: true   # set in Render dashboard
+      - key: VITE_NFT_CONTRACT
+        value: "0xfdf606b80e963ef0a91347b4ae054f0baafa1dc8"
+      - key: VITE_API_URL
+        sync: true   # set to your CF Worker URL: https://zenkai-api.<your-account>.workers.dev
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
