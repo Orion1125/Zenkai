@@ -6,13 +6,17 @@ import { renderConnect }                   from './pages/connect.js';
 import { renderCard }                      from './pages/card.js';
 import { renderArena }                     from './pages/arena.js';
 import { renderProfile }                   from './pages/profile.js';
+import { renderHome }                      from './pages/home.js';
+import { renderLeaderboard }               from './pages/leaderboard.js';
 
 initScene();
 
-registerRoute('/',        () => navigate('/connect'));
-registerRoute('/connect', renderConnect);
-registerRoute('/card',    renderCard);
-registerRoute('/arena',   renderArena);
-registerRoute('/profile', renderProfile);
+registerRoute('/',            () => navigate('/connect'));
+registerRoute('/connect',     renderConnect);
+registerRoute('/card',        renderCard);
+registerRoute('/home',        renderHome);
+registerRoute('/arena',       renderArena);
+registerRoute('/profile',     renderProfile);
+registerRoute('/leaderboard', renderLeaderboard);
 
 initRouter();

@@ -4,6 +4,7 @@
 
 import { navigate } from '../router.js';
 import { playCardReveal } from '../sound.js';
+import { signOwnership } from '../wallet.js';
 import { mapTraitsToCard, deriveStatsFromHash, ELEMENT_COLORS } from '../traits.js';
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
@@ -154,27 +155,106 @@ export async function renderCard(app) {
   const address = localStorage.getItem('zenkai_wallet');
   if (!address) { navigate('/'); return; }
 
-  let savedCard = null;
-  try { savedCard = JSON.parse(localStorage.getItem('zenkai_card') || 'null'); } catch {}
-
   const el = document.createElement('div');
   el.className = 'card card-reveal-page';
   el.innerHTML = `
     <div class="card-accent"></div>
     <div class="brand-logo">ZENKAI</div>
     <div class="brand-sub">YOUR WARRIOR</div>
-    <div id="card-content"><p class="step-tagline">Scanning wallet…</p></div>
+    <div id="card-content"></div>
   `;
   app.appendChild(el);
 
   const content = el.querySelector('#card-content');
 
-  if (savedCard) {
-    showReveal(content, savedCard, address);
+  // Check for previously verified card
+  let savedCard = null;
+  try { savedCard = JSON.parse(localStorage.getItem('zenkai_card') || 'null'); } catch {}
+  const hasVerified = localStorage.getItem('zenkai_verified') === address;
+
+  // If already verified + saved card, go straight to home
+  if (savedCard && hasVerified) {
+    navigate('/home');
     return;
   }
 
-  const nfts = await fetchNFTs(address);
+  // ── Step 1: Signature verification ──
+  content.innerHTML = `
+    <div class="verify-step">
+      <div class="verify-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="1.5">
+          <path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/>
+          <path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h3 class="verify-title">PROVE OWNERSHIP</h3>
+      <p class="verify-msg">Sign a message to verify this wallet is yours.<br>No gas fee — just a signature.</p>
+      <button class="btn-gold" id="btn-sign">🔐 SIGN MESSAGE</button>
+      <p class="verify-status" id="verify-status"></p>
+      <button class="btn-ghost" id="btn-disc-verify">DISCONNECT</button>
+    </div>
+  `;
+
+  content.querySelector('#btn-disc-verify').addEventListener('click', () => {
+    localStorage.removeItem('zenkai_wallet');
+    localStorage.removeItem('zenkai_card');
+    localStorage.removeItem('zenkai_verified');
+    navigate('/');
+  });
+
+  const signBtn = content.querySelector('#btn-sign');
+  const signStatus = content.querySelector('#verify-status');
+
+  signBtn.addEventListener('click', async () => {
+    signBtn.disabled = true;
+    signBtn.textContent = 'WAITING FOR SIGNATURE...';
+    signStatus.textContent = '';
+
+    try {
+      await signOwnership(address);
+      localStorage.setItem('zenkai_verified', address);
+
+      // ── Step 2: Scanning animation ──
+      await showScanningPhase(content, address);
+
+    } catch (err) {
+      signBtn.disabled = false;
+      signBtn.textContent = '🔐 SIGN MESSAGE';
+      const msg = err.code === 4001 || err.code === 'ACTION_REJECTED'
+        ? 'Signature rejected.'
+        : (err.message || 'Signature failed.');
+      signStatus.textContent = msg;
+      signStatus.style.color = 'var(--red-bright, #ff4444)';
+    }
+  });
+}
+
+// ── Scanning phase (after signature) ──────────────────────────────────────────
+async function showScanningPhase(content, address) {
+  content.innerHTML = `
+    <div class="scan-phase">
+      <div class="scan-ring">
+        <div class="scan-ring-inner"></div>
+      </div>
+      <p class="scan-text" id="scan-text">Verifying ownership...</p>
+    </div>
+  `;
+
+  const scanText = content.querySelector('#scan-text');
+
+  // Phase messages with delays for suspense
+  await delay(800);
+  scanText.textContent = 'Scanning wallet for NFTs...';
+
+  // Actually fetch NFTs during the scanning animation
+  const nftsPromise = fetchNFTs(address);
+
+  await delay(1200);
+  scanText.textContent = 'Analyzing card data...';
+
+  const nfts = await nftsPromise;
+
+  await delay(800);
 
   if (nfts.length === 0) {
     content.innerHTML = `
@@ -189,10 +269,14 @@ export async function renderCard(app) {
     content.querySelector('#btn-disc').addEventListener('click', () => {
       localStorage.removeItem('zenkai_wallet');
       localStorage.removeItem('zenkai_card');
+      localStorage.removeItem('zenkai_verified');
       navigate('/');
     });
     return;
   }
+
+  scanText.textContent = 'Warrior found! Preparing reveal...';
+  await delay(1000);
 
   if (nfts.length === 1) {
     showReveal(content, { ...nfts[0], owner: address }, address);
@@ -226,6 +310,8 @@ export async function renderCard(app) {
     grid.appendChild(item);
   });
 }
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Element glyphs for reveal ────────────────────────────────────────────────
 const ELEMENT_GLYPHS = {
@@ -282,24 +368,10 @@ function showReveal(container, card, address, isDemo = false) {
         stage.classList.add('reveal-glow');
         stage.style.setProperty('--elem-color', elemColor);
 
-        // Show action buttons
+        // Navigate to homepage after reveal settles
         setTimeout(() => {
-          const actions = document.createElement('div');
-          actions.className = 'card-actions stagger-in';
-          actions.innerHTML = `
-            <button class="btn-gold" id="btn-arena">ENTER ARENA</button>
-            <button class="btn-ghost" id="btn-profile">VIEW PROFILE</button>
-            <button class="btn-ghost" id="btn-change">CHANGE CARD</button>
-          `;
-          container.appendChild(actions);
-
-          actions.querySelector('#btn-arena').addEventListener('click',  () => navigate('/arena'));
-          actions.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
-          actions.querySelector('#btn-change').addEventListener('click', () => {
-            localStorage.removeItem('zenkai_card');
-            navigate('/card');
-          });
-        }, 400);
+          navigate('/home');
+        }, 800);
       }, 600);
     }, 300);
   }, 800);
