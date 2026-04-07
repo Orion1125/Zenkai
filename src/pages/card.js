@@ -368,10 +368,22 @@ function showReveal(container, card, address, isDemo = false) {
         stage.classList.add('reveal-glow');
         stage.style.setProperty('--elem-color', elemColor);
 
-        // Navigate to homepage after reveal settles
+        // Show action buttons
         setTimeout(() => {
-          navigate('/home');
-        }, 800);
+          const actions = document.createElement('div');
+          actions.className = 'card-actions stagger-in';
+          actions.innerHTML = `
+            <button class="btn-gold" id="btn-home">GO TO DASHBOARD</button>
+            <button class="btn-ghost" id="btn-change">CHANGE CARD</button>
+          `;
+          container.appendChild(actions);
+
+          actions.querySelector('#btn-home').addEventListener('click', () => navigate('/home'));
+          actions.querySelector('#btn-change').addEventListener('click', () => {
+            localStorage.removeItem('zenkai_card');
+            navigate('/card');
+          });
+        }, 400);
       }, 600);
     }, 300);
   }, 800);
