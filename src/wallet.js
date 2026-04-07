@@ -72,6 +72,20 @@ export async function connectWallet() {
   });
 }
 
+/** Sign a message to prove wallet ownership. Returns the signature hex. */
+export async function signOwnership(address) {
+  const provider = modal.getWalletProvider();
+  if (!provider) throw new Error('No wallet provider');
+
+  const { BrowserProvider } = await import('ethers');
+  const ethersProvider = new BrowserProvider(provider);
+  const signer = await ethersProvider.getSigner();
+
+  const message = `ZENKAI Awakening Protocol\n\nProve ownership of this wallet to reveal your warrior card.\n\nWallet: ${address}\nTimestamp: ${Date.now()}`;
+  const signature = await signer.signMessage(message);
+  return signature;
+}
+
 /** Disconnect wallet */
 export async function disconnectWallet() {
   await modal.disconnect();
