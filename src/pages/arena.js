@@ -109,9 +109,10 @@ async function startBattleServer(wrap, myCard, address) {
 
   if (result.status === 'waiting') {
     let tries = 0;
-    while (result.status === 'waiting' && tries < 15) {
+    while (result.status === 'waiting' && tries < 45) {
       await wait(2000);
       tries++;
+      btn.textContent = `SEARCHING… ${tries * 2}s`;
       result = await pollQueue(address);
     }
   }

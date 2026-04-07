@@ -9,6 +9,7 @@ const ALLOWED_ORIGINS = [
   'https://zenkai.io',
   'https://www.zenkai.io',
   'https://zenkai.pages.dev',
+  'https://zenkai-omega.vercel.app',
 ];
 
 function corsOrigin(request) {
@@ -16,6 +17,9 @@ function corsOrigin(request) {
   if (ALLOWED_ORIGINS.includes(origin)) return origin;
   // Allow any *.zenkai.pages.dev preview deploy
   if (/^https:\/\/[a-z0-9-]+\.zenkai\.pages\.dev$/.test(origin)) return origin;
+  // Allow Vercel preview/production deploys
+  if (/^https:\/\/zenkai[a-z0-9-]*\.vercel\.app$/.test(origin)) return origin;
+  if (/^https:\/\/zenkai[a-z0-9-]*-orion1125s-projects\.vercel\.app$/.test(origin)) return origin;
   return ALLOWED_ORIGINS[0];
 }
 
@@ -411,14 +415,14 @@ async function handleQueue(request, env) {
 
   const addr = address.toLowerCase();
 
-  // Clean up stale queue entries (older than 60s)
+  // Clean up stale queue entries (older than 120s)
   await env.DB.prepare(
-    "DELETE FROM battle_queue WHERE queued_at < datetime('now', '-60 seconds')"
+    "DELETE FROM battle_queue WHERE queued_at < datetime('now', '-120 seconds')"
   ).run();
 
   // Check for a waiting opponent (not yourself)
   const opponent = await env.DB.prepare(
-    'SELECT * FROM battle_queue WHERE address != ? LIMIT 1'
+    'SELECT * FROM battle_queue WHERE address != ? ORDER BY queued_at ASC LIMIT 1'
   ).bind(addr).first();
 
   if (opponent) {
