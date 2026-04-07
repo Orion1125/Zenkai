@@ -227,42 +227,101 @@ export async function renderCard(app) {
   });
 }
 
+// ── Element glyphs for reveal ────────────────────────────────────────────────
+const ELEMENT_GLYPHS = {
+  FIRE:   '🔥',
+  WATER:  '💧',
+  EARTH:  '⛰️',
+  SHADOW: '🌑',
+  WIND:   '🌀',
+  VOID:   '✦',
+};
+
 // ── Card reveal sequence ────────────────────────────────────────────────────
 function showReveal(container, card, address, isDemo = false) {
   const cardData = { ...card, level: card.level || 1, xp: card.xp || 0, owner: address, attributes: card.attributes || [] };
   localStorage.setItem('zenkai_card', JSON.stringify(cardData));
 
+  const stats = deriveStats(cardData.tokenId, cardData.attributes);
+  const element = stats.element || 'VOID';
+  const elemColor = stats.elementColor || ELEMENT_COLORS[element] || '#ffcc00';
+  const glyph = ELEMENT_GLYPHS[element] || '✦';
+
   container.innerHTML = `
-    <div id="reveal-stage">
-      ${buildCardBack()}
+    <div id="reveal-stage" class="reveal-stage">
+      <div class="reveal-particles" id="reveal-particles"></div>
+      <div class="reveal-flipper" id="reveal-flipper">
+        <div class="reveal-face reveal-back">
+          <div class="reveal-back-pattern"></div>
+          <div class="reveal-element-glyph" style="--elem-color: ${elemColor}">${glyph}</div>
+          <div class="reveal-back-title">ZENKAI</div>
+        </div>
+        <div class="reveal-face reveal-front" id="reveal-front"></div>
+      </div>
     </div>
-    ${isDemo ? '' : ''}
   `;
 
-  const stage = container.querySelector('#reveal-stage');
+  const stage    = container.querySelector('#reveal-stage');
+  const flipper  = container.querySelector('#reveal-flipper');
+  const front    = container.querySelector('#reveal-front');
+  const particles = container.querySelector('#reveal-particles');
 
+  // Phase 1: glyph pulse (already animated via CSS)
+  // Phase 2: spawn element particles, then flip
   setTimeout(() => {
+    spawnParticles(particles, elemColor);
     playCardReveal();
-    stage.innerHTML = buildCardHTML(cardData);
-    const zkCard = stage.querySelector('.zk-card');
-    zkCard.classList.add('zk-reveal-anim');
 
+    // Phase 3: flip the card
     setTimeout(() => {
-      const actions = document.createElement('div');
-      actions.className = 'card-actions';
-      actions.innerHTML = `
-        <button class="btn-gold" id="btn-arena">ENTER ARENA</button>
-        <button class="btn-ghost" id="btn-profile">VIEW PROFILE</button>
-        <button class="btn-ghost" id="btn-change">CHANGE CARD</button>
-      `;
-      container.appendChild(actions);
+      front.innerHTML = buildCardHTML(cardData);
+      flipper.classList.add('reveal-flipped');
 
-      actions.querySelector('#btn-arena').addEventListener('click',  () => navigate('/arena'));
-      actions.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
-      actions.querySelector('#btn-change').addEventListener('click', () => {
-        localStorage.removeItem('zenkai_card');
-        navigate('/card');
-      });
-    }, 600);
-  }, 500);
+      // Phase 4: element glow settles
+      setTimeout(() => {
+        stage.classList.add('reveal-glow');
+        stage.style.setProperty('--elem-color', elemColor);
+
+        // Show action buttons
+        setTimeout(() => {
+          const actions = document.createElement('div');
+          actions.className = 'card-actions stagger-in';
+          actions.innerHTML = `
+            <button class="btn-gold" id="btn-arena">ENTER ARENA</button>
+            <button class="btn-ghost" id="btn-profile">VIEW PROFILE</button>
+            <button class="btn-ghost" id="btn-change">CHANGE CARD</button>
+          `;
+          container.appendChild(actions);
+
+          actions.querySelector('#btn-arena').addEventListener('click',  () => navigate('/arena'));
+          actions.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
+          actions.querySelector('#btn-change').addEventListener('click', () => {
+            localStorage.removeItem('zenkai_card');
+            navigate('/card');
+          });
+        }, 400);
+      }, 600);
+    }, 300);
+  }, 800);
+}
+
+// ── Particle burst ──────────────────────────────────────────────────────────
+function spawnParticles(container, color) {
+  const count = 18;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.className = 'reveal-particle';
+    const angle = (360 / count) * i + (Math.random() * 20 - 10);
+    const dist  = 80 + Math.random() * 60;
+    const size  = 3 + Math.random() * 4;
+    const dur   = 0.6 + Math.random() * 0.4;
+    p.style.cssText = `
+      --angle: ${angle}deg;
+      --dist: ${dist}px;
+      --size: ${size}px;
+      --dur: ${dur}s;
+      background: ${color};
+    `;
+    container.appendChild(p);
+  }
 }

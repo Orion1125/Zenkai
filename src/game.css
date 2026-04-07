@@ -268,7 +268,7 @@ a.zk-card-id {
   flex-shrink: 0;
 }
 
-/* Card back */
+/* Card back (legacy, kept for buildCardBack) */
 .zk-card-back-face {
   background: linear-gradient(160deg, #1a1000 0%, #0a0800 100%);
   border-color: rgba(255,208,0,0.15);
@@ -298,7 +298,139 @@ a.zk-card-id {
   position: relative; z-index: 1;
 }
 
-/* Reveal animation */
+/* ══════════════════════════════════════════════════════════
+   Card Reveal — Element-Themed 3D Flip
+   ══════════════════════════════════════════════════════════ */
+
+.reveal-stage {
+  perspective: 900px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 320px;
+  margin: 12px 0;
+}
+
+.reveal-flipper {
+  width: 220px;
+  height: 310px;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.reveal-flipped {
+  transform: rotateY(180deg);
+}
+
+.reveal-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* ── Back face ── */
+.reveal-back {
+  background: linear-gradient(160deg, #1a1000 0%, #0a0800 100%);
+  border: 1px solid rgba(255,208,0,0.15);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.reveal-back-pattern {
+  position: absolute; inset: 8px;
+  border: 1px solid rgba(255,208,0,0.06);
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(45deg, rgba(255,208,0,0.02) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(-45deg, rgba(255,208,0,0.015) 0 1px, transparent 1px 8px);
+  pointer-events: none;
+}
+
+.reveal-element-glyph {
+  font-size: 3rem;
+  position: relative;
+  z-index: 1;
+  animation: glyphPulse 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px var(--elem-color, #ffcc00));
+}
+
+@keyframes glyphPulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 12px var(--elem-color, #ffcc00)); }
+  50%      { transform: scale(1.15); filter: drop-shadow(0 0 28px var(--elem-color, #ffcc00)); }
+}
+
+.reveal-back-title {
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 8px;
+  color: rgba(255,208,0,0.2);
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Front face ── */
+.reveal-front {
+  transform: rotateY(180deg);
+  background: var(--surface);
+}
+.reveal-front .zk-card {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+}
+
+/* ── Element glow settle ── */
+.reveal-glow {
+  filter: drop-shadow(0 0 0 transparent);
+  animation: elemGlowSettle 1s ease-out forwards;
+}
+
+@keyframes elemGlowSettle {
+  0%   { filter: drop-shadow(0 0 30px var(--elem-color, #ffcc00)); }
+  60%  { filter: drop-shadow(0 0 18px var(--elem-color, #ffcc00)); }
+  100% { filter: drop-shadow(0 0 8px  var(--elem-color, #ffcc00)); }
+}
+
+/* ── Particles ── */
+.reveal-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.reveal-particle {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: var(--size, 4px);
+  height: var(--size, 4px);
+  border-radius: 50%;
+  opacity: 0;
+  animation: particleBurst var(--dur, 0.7s) ease-out forwards;
+}
+
+@keyframes particleBurst {
+  0% {
+    transform: translate(-50%, -50%) rotate(var(--angle, 0deg)) translateX(0);
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--angle, 0deg)) translateX(var(--dist, 80px));
+    opacity: 0;
+  }
+}
+
+/* ── Old reveal anim (kept for arena context) ── */
 @keyframes zkReveal {
   0%   { transform: rotateY(90deg) scale(0.85); opacity: 0; }
   60%  { transform: rotateY(-8deg) scale(1.02); opacity: 1; }
@@ -307,6 +439,14 @@ a.zk-card-id {
 
 .zk-reveal-anim {
   animation: zkReveal 0.55s cubic-bezier(0.22,1,0.36,1) forwards;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-flipper   { transition-duration: 0.01s; }
+  .reveal-particle  { animation: none !important; }
+  .reveal-element-glyph { animation: none !important; }
+  .reveal-glow      { animation: none !important; }
 }
 
 /* Battle hit states */
@@ -635,17 +775,6 @@ a.zk-card-id {
 @keyframes epicPulse {
   0%, 100% { box-shadow: 0 0 14px 3px rgba(255,120,0,0.30), 0 0 30px 8px rgba(255,120,0,0.08); }
   50%      { box-shadow: 0 0 22px 6px rgba(255,120,0,0.45), 0 0 48px 14px rgba(255,120,0,0.14); }
-}
-
-/* ── Reveal animation ─────────────────────────────────────────────────────── */
-.zk-reveal-anim {
-  animation: cardRevealFlip 0.7s cubic-bezier(0.34,1.56,0.64,1) forwards;
-}
-
-@keyframes cardRevealFlip {
-  0%   { opacity: 0; transform: rotateY(90deg) scale(0.8); }
-  60%  { opacity: 1; transform: rotateY(-5deg)  scale(1.02); }
-  100% { opacity: 1; transform: rotateY(0deg)   scale(1); }
 }
 
 .final-win  { background: rgba(255,208,0,0.08); border: 1px solid rgba(255,208,0,0.3); }
