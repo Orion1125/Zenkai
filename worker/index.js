@@ -3,25 +3,48 @@
 // DB: D1 (SQLite)  |  No Express, no Neon
 // ══════════════════════════════════════════════
 
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:8787',
+  'https://zenkai.io',
+  'https://www.zenkai.io',
+  'https://zenkai.pages.dev',
+];
+
+function corsOrigin(request) {
+  const origin = request.headers.get('Origin') || '';
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  // Allow any *.zenkai.pages.dev preview deploy
+  if (/^https:\/\/[a-z0-9-]+\.zenkai\.pages\.dev$/.test(origin)) return origin;
+  return ALLOWED_ORIGINS[0];
+}
+
+function corsHeaders(request) {
+  return {
+    'Access-Control-Allow-Origin':  corsOrigin(request),
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Current request reference for CORS (set at top of each fetch)
+let _req = null;
+
 function json(data, status = 200) {
+  const cors = _req ? corsHeaders(_req) : { 'Access-Control-Allow-Origin': '*' };
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
+    headers: { ...cors, 'Content-Type': 'application/json' },
   });
 }
 
 function csvResponse(text, filename) {
+  const cors = _req ? corsHeaders(_req) : { 'Access-Control-Allow-Origin': '*' };
   return new Response(text, {
     headers: {
-      ...CORS,
+      ...cors,
       'Content-Type': 'text/csv',
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
@@ -178,13 +201,14 @@ function calcXP(myRarity, oppRarity, won, draw) {
 
 export default {
   async fetch(request, env) {
+    _req = request;
     const url    = new URL(request.url);
     const path   = url.pathname;
     const method = request.method;
 
     // CORS preflight
     if (method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS });
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
     try {
