@@ -856,9 +856,74 @@ html, body {
 /* ==============================
    PAGE TRANSITIONS
    ============================== */
-.page-exit { animation: pageOut 0.28s ease forwards; }
+.page-enter {
+  animation: pageIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
 
-@keyframes pageOut { to { opacity: 0; transform: translateY(-14px); } }
+.page-exit {
+  animation: pageOut 0.3s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  pointer-events: none;
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes pageOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.97);
+    filter: blur(3px);
+  }
+}
+
+/* Staggered children entrance */
+.page-enter > *:nth-child(1) { animation-delay: 0ms; }
+.page-enter > *:nth-child(2) { animation-delay: 60ms; }
+.page-enter > *:nth-child(3) { animation-delay: 120ms; }
+.page-enter > *:nth-child(4) { animation-delay: 180ms; }
+.page-enter > *:nth-child(5) { animation-delay: 240ms; }
+
+/* Element-level stagger for children */
+.stagger-in > * {
+  opacity: 0;
+  animation: fadeSlideUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-in > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-in > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-in > *:nth-child(4) { animation-delay: 140ms; }
+.stagger-in > *:nth-child(5) { animation-delay: 180ms; }
+.stagger-in > *:nth-child(6) { animation-delay: 220ms; }
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced motion — respect user preferences */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .page-exit,
+  .stagger-in > * {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+}
 
 /* ==============================
    SHAKE

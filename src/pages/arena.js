@@ -38,6 +38,7 @@ export function renderArena(app) {
       <div class="brand-logo arena-logo">ZENKAI</div>
       <div class="arena-wallet-row">
         <span class="arena-addr">${esc(address.slice(0,6))}…${esc(address.slice(-4))}</span>
+        <button class="btn-ghost arena-disconnect" id="btn-profile">PROFILE</button>
         <button class="btn-ghost arena-disconnect" id="btn-disconnect">DISCONNECT</button>
       </div>
     </div>
@@ -72,6 +73,8 @@ export function renderArena(app) {
     localStorage.removeItem('zenkai_card');
     navigate('/');
   });
+
+  wrap.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
 
   const wins   = parseInt(localStorage.getItem('zenkai_wins') || '0');
   const losses = parseInt(localStorage.getItem('zenkai_losses') || '0');

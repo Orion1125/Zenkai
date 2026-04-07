@@ -8,15 +8,6 @@ import { mapTraitsToCard, deriveStatsFromHash, ELEMENT_COLORS } from '../traits.
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
 
-// Try multiple chains — return results from whichever one has the NFT
-const CHAINS = [
-  'eth-mainnet',
-  'base-mainnet',
-  'polygon-mainnet',
-  'arb-mainnet',
-  'opt-mainnet',
-];
-
 // ── Derive card stats (trait-based or hash fallback) ────────────────────────
 export function deriveStats(tokenId, attributes) {
   if (attributes && attributes.length > 0) {
@@ -36,48 +27,69 @@ async function fetchNFTs(address) {
     return [];
   }
 
-  const buildUrl = (chain) => {
-    const params = new URLSearchParams({
-      owner: address,
-      withMetadata: 'true',
-      pageSize: '50',
-    });
-    if (NFT_CONTRACT) params.append('contractAddresses[]', NFT_CONTRACT);
-    return `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner?${params}`;
-  };
-
   const parseNFTs = (data) =>
     (data.ownedNfts || []).map(n => ({
       tokenId:    n.tokenId || '0',
       name:       n.name    || `ZENKAI #${n.tokenId}`,
       image:      n.image?.cachedUrl || n.image?.originalUrl || '',
-      contract:   n.contract?.address || '',
+      contract:   (n.contract?.address || '').toLowerCase(),
       attributes: n.raw?.metadata?.attributes || [],
     }));
 
-  // Fire all chains in parallel, return first non-empty result
+  // Strategy 1: fetch with contract filter on eth-mainnet (most common)
+  const filteredUrl = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
+    + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=50`
+    + `&contractAddresses%5B%5D=${encodeURIComponent(NFT_CONTRACT)}`;
+
+  try {
+    const r = await fetch(filteredUrl);
+    if (r.ok) {
+      const data = await r.json();
+      const nfts = parseNFTs(data);
+      if (nfts.length > 0) return nfts;
+    }
+  } catch (err) {
+    console.warn('[ZENKAI] Filtered fetch failed:', err.message);
+  }
+
+  // Strategy 2: fetch ALL NFTs for wallet on eth-mainnet, filter client-side
+  const allUrl = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
+    + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=100`;
+
+  try {
+    const r = await fetch(allUrl);
+    if (r.ok) {
+      const data = await r.json();
+      const all  = parseNFTs(data);
+      const matched = NFT_CONTRACT
+        ? all.filter(n => n.contract === NFT_CONTRACT)
+        : all;
+      if (matched.length > 0) return matched;
+    }
+  } catch (err) {
+    console.warn('[ZENKAI] Unfiltered fetch failed:', err.message);
+  }
+
+  // Strategy 3: try other chains with contract filter
+  const otherChains = ['base-mainnet', 'polygon-mainnet', 'arb-mainnet', 'opt-mainnet'];
   try {
     const results = await Promise.all(
-      CHAINS.map(chain =>
-        fetch(buildUrl(chain))
-          .then(r => {
-            if (!r.ok) throw new Error(`${chain} HTTP ${r.status}`);
-            return r.json();
-          })
+      otherChains.map(chain => {
+        const url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
+          + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=50`
+          + (NFT_CONTRACT ? `&contractAddresses%5B%5D=${encodeURIComponent(NFT_CONTRACT)}` : '');
+        return fetch(url)
+          .then(r => r.ok ? r.json() : { ownedNfts: [] })
           .then(d => parseNFTs(d))
-          .catch(err => {
-            console.warn(`[ZENKAI] NFT fetch failed on ${chain}:`, err.message);
-            return [];
-          })
-      )
+          .catch(() => []);
+      })
     );
     const found = results.find(r => r.length > 0);
-    if (!found) console.warn('[ZENKAI] No NFTs found across chains for', address);
-    return found || [];
-  } catch (err) {
-    console.warn('[ZENKAI] fetchNFTs error:', err);
-    return [];
-  }
+    if (found) return found;
+  } catch {}
+
+  console.warn('[ZENKAI] No NFTs found for', address);
+  return [];
 }
 
 // ── Build card HTML ─────────────────────────────────────────────────────────
@@ -258,11 +270,13 @@ function showReveal(container, card, address, isDemo = false) {
       actions.className = 'card-actions';
       actions.innerHTML = `
         <button class="btn-gold" id="btn-arena">ENTER ARENA</button>
+        <button class="btn-ghost" id="btn-profile">VIEW PROFILE</button>
         <button class="btn-ghost" id="btn-change">CHANGE CARD</button>
       `;
       container.appendChild(actions);
 
       actions.querySelector('#btn-arena').addEventListener('click',  () => navigate('/arena'));
+      actions.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
       actions.querySelector('#btn-change').addEventListener('click', () => {
         localStorage.removeItem('zenkai_card');
         navigate('/card');

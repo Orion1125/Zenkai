@@ -86,3 +86,14 @@ CREATE TABLE IF NOT EXISTS battles (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   resolved_at DATETIME
 );
+
+-- ── Profile table ────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS profiles (
+  address      TEXT PRIMARY KEY,
+  display_name TEXT,
+  bio          TEXT,
+  avatar_url   TEXT,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);

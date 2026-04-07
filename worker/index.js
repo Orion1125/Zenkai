@@ -286,6 +286,24 @@ export default {
         return json({ leaderboard: rows.results });
       }
 
+      // ── Profile: Get ──────────────────────────────────────────────────────
+      if (method === 'GET' && path.startsWith('/api/profile/')) {
+        const address = path.split('/').pop().toLowerCase();
+        if (!isValidEthAddress(address)) return json({ error: 'invalid' }, 400);
+        const profile = await env.DB.prepare(
+          'SELECT * FROM profiles WHERE address = ?'
+        ).bind(address).first();
+        const card = await env.DB.prepare(
+          'SELECT level, xp, wins, losses, name, image, element, rarity FROM game_cards WHERE address = ?'
+        ).bind(address).first();
+        return json({ profile: profile || null, card: card || null });
+      }
+
+      // ── Profile: Upsert ───────────────────────────────────────────────────
+      if (method === 'POST' && path === '/api/profile') {
+        return handleProfileUpsert(request, env);
+      }
+
       return json({ error: 'not_found' }, 404);
 
     } catch (err) {
@@ -513,4 +531,37 @@ async function handleQueueStatus(address, env) {
   ).bind(address).first();
 
   return json({ status: inQueue ? 'waiting' : 'idle' });
+}
+
+async function handleProfileUpsert(request, env) {
+  const body = await request.json();
+  const { address, displayName, bio, avatarUrl } = body;
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid Ethereum address' }, 400);
+  }
+
+  const addr      = address.toLowerCase();
+  const cleanName = (displayName || '').trim().slice(0, 50) || null;
+  const cleanBio  = (bio || '').trim().slice(0, 280) || null;
+  const cleanUrl  = (avatarUrl || '').trim().slice(0, 500) || null;
+
+  const existing = await env.DB.prepare(
+    'SELECT * FROM profiles WHERE address = ?'
+  ).bind(addr).first();
+
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE profiles SET display_name = ?, bio = ?, avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?`
+    ).bind(cleanName, cleanBio, cleanUrl, addr).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO profiles (address, display_name, bio, avatar_url) VALUES (?, ?, ?, ?)`
+    ).bind(addr, cleanName, cleanBio, cleanUrl).run();
+  }
+
+  const profile = await env.DB.prepare(
+    'SELECT * FROM profiles WHERE address = ?'
+  ).bind(addr).first();
+  return json({ success: true, profile });
 }

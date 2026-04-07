@@ -60,3 +60,13 @@ export async function pollQueue(address) {
 export async function getLeaderboard() {
   return apiGet('/api/game/leaderboard');
 }
+
+/** Fetch player profile + card summary */
+export async function getProfile(address) {
+  return apiGet(`/api/profile/${address}`);
+}
+
+/** Update player profile */
+export async function updateProfile(address, data) {
+  return apiPost('/api/profile', { address, ...data });
+}
