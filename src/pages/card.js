@@ -4,33 +4,7 @@
 
 import { navigate } from '../router.js';
 import { playCardReveal } from '../sound.js';
-
-// ── Stat derivation (deterministic from tokenId) ────────────────────────────
-export function deriveStats(tokenId) {
-  const s  = String(tokenId);
-  let   h  = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  h = Math.abs(h);
-
-  const RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY'];
-  const rarityIdx = h % 100 < 50 ? 0 : h % 100 < 75 ? 1 : h % 100 < 90 ? 2 : h % 100 < 98 ? 3 : 4;
-
-  return {
-    pwr:    45 + (h * 7)  % 40,
-    def:    30 + (h * 11) % 40,
-    spd:    50 + (h * 13) % 30,
-    rarity: RARITIES[rarityIdx],
-    hue:    h % 360,
-  };
-}
-
-const RARITY_COLOR = {
-  COMMON:    '#888888',
-  UNCOMMON:  '#00c0ff',
-  RARE:      '#b040ff',
-  EPIC:      '#ff9900',
-  LEGENDARY: '#FFD000',
-};
+import { mapTraitsToCard, deriveStatsFromHash, ELEMENT_COLORS } from '../traits.js';
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
 
@@ -43,23 +17,32 @@ const CHAINS = [
   'opt-mainnet',
 ];
 
+// ── Derive card stats (trait-based or hash fallback) ────────────────────────
+export function deriveStats(tokenId, attributes) {
+  if (attributes && attributes.length > 0) {
+    return mapTraitsToCard(attributes);
+  }
+  return deriveStatsFromHash(tokenId);
+}
+
 async function fetchNFTs(address) {
   const key = import.meta.env.VITE_ALCHEMY_KEY;
   if (!key) return [];
 
   const buildUrl = (chain) => {
     let url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
-      + `?owner=${address}&withMetadata=true&pageSize=50`;
-    if (NFT_CONTRACT) url += `&contractAddresses[]=${NFT_CONTRACT}`;
+      + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=50`;
+    if (NFT_CONTRACT) url += `&contractAddresses[]=${encodeURIComponent(NFT_CONTRACT)}`;
     return url;
   };
 
   const parseNFTs = (data) =>
     (data.ownedNfts || []).map(n => ({
-      tokenId:  n.tokenId || '0',
-      name:     n.name    || `ZENKAI #${n.tokenId}`,
-      image:    n.image?.cachedUrl || n.image?.originalUrl || '',
-      contract: n.contract?.address || '',
+      tokenId:    n.tokenId || '0',
+      name:       n.name    || `ZENKAI #${n.tokenId}`,
+      image:      n.image?.cachedUrl || n.image?.originalUrl || '',
+      contract:   n.contract?.address || '',
+      attributes: n.raw?.metadata?.attributes || [],
     }));
 
   // Fire all chains in parallel, return first non-empty result
@@ -67,12 +50,14 @@ async function fetchNFTs(address) {
     const results = await Promise.all(
       CHAINS.map(chain =>
         fetch(buildUrl(chain))
-          .then(r => r.json())
+          .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          })
           .then(d => parseNFTs(d))
           .catch(() => [])
       )
     );
-    // Return the first chain that has NFTs, or empty
     return results.find(r => r.length > 0) || [];
   } catch {
     return [];
@@ -81,8 +66,7 @@ async function fetchNFTs(address) {
 
 // ── Build card HTML ─────────────────────────────────────────────────────────
 export function buildCardHTML(card) {
-  const stats  = deriveStats(card.tokenId);
-  const rColor = RARITY_COLOR[stats.rarity] || '#888';
+  const stats  = deriveStats(card.tokenId, card.attributes);
   const level  = card.level  || 1;
   const xp     = card.xp     || 0;
   const xpNext = level * 100;
@@ -91,22 +75,33 @@ export function buildCardHTML(card) {
     ? `${card.owner.slice(0, 6)}…${card.owner.slice(-4)}`
     : '';
 
+  // Safe text escaping
+  const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  const rColor = stats.rarityColor || '#888';
+  const elemBadge = stats.element
+    ? `<span class="zk-element-badge" style="background:${stats.elementColor}">${esc(stats.element)}</span>`
+    : '';
+  const abilityTag = stats.ability
+    ? `<span class="zk-ability-tag" title="${esc(stats.abilityDesc)}">${esc(stats.ability)}</span>`
+    : '';
+
   return `
-    <div class="zk-card" data-token="${card.tokenId}">
+    <div class="zk-card ${stats.rarity === 'LEGENDARY' ? 'zk-legendary' : stats.rarity === 'EPIC' ? 'zk-epic' : ''}" data-token="${esc(String(card.tokenId))}" data-element="${esc(stats.element)}">
       <div class="zk-card-shine"></div>
       <div class="zk-card-header">
-        <span class="zk-card-id">ZKN #${card.tokenId.toString().padStart(4, '0')}</span>
-        <span class="zk-card-rarity" style="color:${rColor}">${stats.rarity}</span>
+        <span class="zk-card-id">ZKN #${esc(String(card.tokenId).padStart(4, '0'))}</span>
+        <span class="zk-card-rarity" style="color:${rColor}">${esc(stats.rarity)}</span>
       </div>
       <div class="zk-card-art-wrap">
         ${card.image
-          ? `<img class="zk-card-art" src="${card.image}" alt="${card.name}" onerror="this.style.display='none'" />`
+          ? `<img class="zk-card-art" src="${esc(card.image)}" alt="${esc(card.name)}" onerror="this.style.display='none'" />`
           : `<div class="zk-card-art-blank"><span>?</span></div>`
         }
         <div class="zk-card-art-overlay"></div>
       </div>
       <div class="zk-card-body">
-        <div class="zk-card-name">${card.name}</div>
+        <div class="zk-card-name">${esc(card.name)}</div>
+        <div class="zk-card-meta">${elemBadge}${abilityTag}</div>
         <div class="zk-stats">
           <div class="zk-stat pwr">
             <span class="zk-stat-label">PWR</span>
@@ -203,9 +198,20 @@ export async function renderCard(app) {
   nfts.forEach(nft => {
     const item = document.createElement('div');
     item.className = 'nft-pick-item';
-    item.innerHTML = nft.image
-      ? `<img src="${nft.image}" alt="${nft.name}" /><span>#${nft.tokenId}</span>`
-      : `<div class="nft-pick-blank">?</div><span>#${nft.tokenId}</span>`;
+    if (nft.image) {
+      const img = document.createElement('img');
+      img.src = nft.image;
+      img.alt = nft.name;
+      item.appendChild(img);
+    } else {
+      const blank = document.createElement('div');
+      blank.className = 'nft-pick-blank';
+      blank.textContent = '?';
+      item.appendChild(blank);
+    }
+    const label = document.createElement('span');
+    label.textContent = `#${nft.tokenId}`;
+    item.appendChild(label);
     item.addEventListener('click', () => showReveal(content, { ...nft, owner: address }, address));
     grid.appendChild(item);
   });
@@ -213,7 +219,7 @@ export async function renderCard(app) {
 
 // ── Card reveal sequence ────────────────────────────────────────────────────
 function showReveal(container, card, address, isDemo = false) {
-  const cardData = { ...card, level: card.level || 1, xp: card.xp || 0, owner: address };
+  const cardData = { ...card, level: card.level || 1, xp: card.xp || 0, owner: address, attributes: card.attributes || [] };
   localStorage.setItem('zenkai_card', JSON.stringify(cardData));
 
   container.innerHTML = `

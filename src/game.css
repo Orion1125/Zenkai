@@ -561,6 +561,83 @@
 
 @keyframes finalPop { to { opacity: 1; transform: scale(1); } }
 
+/* ══════════════════════════════════════════════
+   Element / Ability / Rarity Styles
+   ══════════════════════════════════════════════ */
+
+/* ── Card meta row (element badge + ability tag) ──────────────────────────── */
+.zk-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+}
+
+.zk-element-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 20px;
+  color: #000;
+  line-height: 1.4;
+}
+
+.zk-ability-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,208,0,0.35);
+  color: var(--gold);
+  background: rgba(255,208,0,0.06);
+  cursor: help;
+  line-height: 1.4;
+}
+
+/* ── Rarity glow on card wrapper ──────────────────────────────────────────── */
+.zk-legendary {
+  box-shadow: 0 0 18px 4px rgba(255,208,0,0.35),
+              0 0 40px 10px rgba(255,208,0,0.10);
+  animation: legendaryPulse 3s ease-in-out infinite;
+}
+
+@keyframes legendaryPulse {
+  0%, 100% { box-shadow: 0 0 18px 4px rgba(255,208,0,0.35), 0 0 40px 10px rgba(255,208,0,0.10); }
+  50%      { box-shadow: 0 0 28px 8px rgba(255,208,0,0.50), 0 0 60px 18px rgba(255,208,0,0.18); }
+}
+
+.zk-epic {
+  box-shadow: 0 0 14px 3px rgba(255,120,0,0.30),
+              0 0 30px 8px rgba(255,120,0,0.08);
+  animation: epicPulse 3.5s ease-in-out infinite;
+}
+
+@keyframes epicPulse {
+  0%, 100% { box-shadow: 0 0 14px 3px rgba(255,120,0,0.30), 0 0 30px 8px rgba(255,120,0,0.08); }
+  50%      { box-shadow: 0 0 22px 6px rgba(255,120,0,0.45), 0 0 48px 14px rgba(255,120,0,0.14); }
+}
+
+/* ── Reveal animation ─────────────────────────────────────────────────────── */
+.zk-reveal-anim {
+  animation: cardRevealFlip 0.7s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+@keyframes cardRevealFlip {
+  0%   { opacity: 0; transform: rotateY(90deg) scale(0.8); }
+  60%  { opacity: 1; transform: rotateY(-5deg)  scale(1.02); }
+  100% { opacity: 1; transform: rotateY(0deg)   scale(1); }
+}
+
 .final-win  { background: rgba(255,208,0,0.08); border: 1px solid rgba(255,208,0,0.3); }
 .final-lose { background: rgba(212,0,0,0.08);   border: 1px solid rgba(212,0,0,0.3);   }
 .final-draw { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); }

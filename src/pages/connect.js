@@ -1,8 +1,9 @@
 // ══════════════════════════════════════════════
-// ZENKAI — Connect Wallet
+// ZENKAI — Connect Wallet (Web3Modal + MetaMask)
 // ══════════════════════════════════════════════
 
 import { navigate } from '../router.js';
+import { connectWallet } from '../wallet.js';
 
 export function renderConnect(app) {
   // Already connected — go straight to card
@@ -33,7 +34,7 @@ export function renderConnect(app) {
     <button class="btn-gold" id="btn-connect">⚡ CONNECT WALLET</button>
     <p class="connect-status" id="connect-status"></p>
 
-    <p class="connect-footer">Supports MetaMask and any injected wallet</p>
+    <p class="connect-footer">WalletConnect · MetaMask · Coinbase · Any wallet</p>
   `;
   app.appendChild(el);
 
@@ -41,24 +42,19 @@ export function renderConnect(app) {
   const status = el.querySelector('#connect-status');
 
   btn.addEventListener('click', async () => {
-    if (!window.ethereum) {
-      status.textContent = '⚠ No wallet detected. Install MetaMask first.';
-      status.style.color = 'var(--red-bright)';
-      return;
-    }
-
     btn.disabled = true;
     btn.textContent = 'CONNECTING...';
+    status.textContent = '';
 
     try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      const address  = accounts[0].toLowerCase();
+      const address = await connectWallet();
       localStorage.setItem('zenkai_wallet', address);
       navigate('/card');
     } catch (err) {
       btn.disabled = false;
       btn.textContent = '⚡ CONNECT WALLET';
-      status.textContent = err.code === 4001 ? 'Connection rejected.' : (err.message || 'Something went wrong.');
+      const msg = err.code === 4001 ? 'Connection rejected.' : (err.message || 'Something went wrong.');
+      status.textContent = msg;
       status.style.color = 'var(--red-bright)';
     }
   });

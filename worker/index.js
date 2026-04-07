@@ -40,40 +40,138 @@ function getClientIp(request) {
   );
 }
 
-// ── Stat derivation (must match frontend) ────────────────────────────────────
+// ── Stat derivation (hash fallback — used when no attributes stored) ─────────
 
-function deriveStats(tokenId) {
+function deriveStatsFromHash(tokenId) {
   const s = String(tokenId);
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
   h = Math.abs(h);
   return {
-    pwr: 45 + (h * 7)  % 40,
-    def: 30 + (h * 11) % 40,
-    spd: 50 + (h * 13) % 30,
+    pwr:     45 + (h * 7)  % 40,
+    def:     30 + (h * 11) % 40,
+    spd:     50 + (h * 13) % 30,
+    element: ['FIRE','WATER','EARTH','SHADOW','WIND','VOID'][h % 6],
+    ability: ['ZENKAI SURGE','MIRROR COUNTER','AWAKENED','PREDATOR','BLOODLUST','FLASH','RESOLVE'][(h * 3) % 7],
+    rarity:  'COMMON',
   };
 }
 
-function resolveBattle(p1TokenId, p2TokenId) {
-  const s1 = deriveStats(p1TokenId);
-  const s2 = deriveStats(p2TokenId);
+// ── Element advantage chart ────────────────────────────────────────────────
 
-  const rounds = [
-    { stat: 'PWR', p1: s1.pwr, p2: s2.pwr },
-    { stat: 'DEF', p1: s1.def, p2: s2.def },
-    { stat: 'SPD', p1: s1.spd, p2: s2.spd },
-  ].map(r => ({
-    ...r,
-    result: r.p1 > r.p2 ? 'p1' : r.p2 > r.p1 ? 'p2' : 'draw',
-  }));
+const ELEMENT_ADVANTAGE = {
+  FIRE:   'WIND',
+  WIND:   'EARTH',
+  EARTH:  'WATER',
+  WATER:  'FIRE',
+  SHADOW: null,
+  VOID:   null,
+};
 
-  const p1Wins = rounds.filter(r => r.result === 'p1').length;
-  const p2Wins = rounds.filter(r => r.result === 'p2').length;
+// ── Seeded random (deterministic per battle) ────────────────────────────────
+
+function seededRng(seed) {
+  let s = Math.abs(seed) || 1;
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+function battleSeed(p1id, p2id) {
+  const combo = `${p1id}:${p2id}:${Date.now()}`;
+  let h = 0;
+  for (let i = 0; i < combo.length; i++) h = (Math.imul(31, h) + combo.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// ── Full trait-based battle resolution (mirrors frontend traits.js) ──────────
+
+function resolveBattle(p1, p2, seed) {
+  const rng = seededRng(seed || battleSeed(String(p1.pwr), String(p2.pwr)));
+
+  const lvlBonus1 = (p1.level || 1) * 1.2;
+  const lvlBonus2 = (p2.level || 1) * 1.2;
+
+  let elemAdv1 = 0, elemAdv2 = 0;
+  if (p1.element && p2.element) {
+    if (ELEMENT_ADVANTAGE[p1.element] === p2.element) elemAdv1 = 8;
+    if (ELEMENT_ADVANTAGE[p2.element] === p1.element) elemAdv2 = 8;
+  }
+
+  const shadowBonus = (el) => el === 'SHADOW' ? 5 : 0;
+  const shadowPen   = (el) => el === 'SHADOW' ? 5 : 0;
+
+  const STATS = ['PWR', 'DEF', 'SPD'];
+  const rounds = [];
+  let p1Score = 0, p2Score = 0;
+
+  for (let i = 0; i < 3; i++) {
+    const stat = STATS[i];
+    let v1 = (p1[stat.toLowerCase()] || 50) + lvlBonus1 + elemAdv1 + shadowBonus(p1.element);
+    let v2 = (p2[stat.toLowerCase()] || 50) + lvlBonus2 + elemAdv2 + shadowBonus(p2.element);
+
+    v1 -= shadowPen(p1.element);
+    v2 -= shadowPen(p2.element);
+
+    // Apply abilities
+    if (stat === 'PWR') {
+      if (p1.ability === 'ZENKAI SURGE')  v1 += rng() < 0.3 ? 15 : 0;
+      if (p2.ability === 'ZENKAI SURGE')  v2 += rng() < 0.3 ? 15 : 0;
+      if (p1.ability === 'BLOODLUST')     v1 += 6;
+      if (p2.ability === 'BLOODLUST')     v2 += 6;
+      if (p1.ability === 'PREDATOR')      v1 += p2.pwr < p1.pwr ? 8 : 0;
+      if (p2.ability === 'PREDATOR')      v2 += p1.pwr < p2.pwr ? 8 : 0;
+    }
+    if (stat === 'DEF') {
+      if (p1.ability === 'AWAKENED')  v1 += 5;
+      if (p2.ability === 'AWAKENED')  v2 += 5;
+      if (p1.ability === 'RESOLVE' && i === 2) v1 += 10;
+      if (p2.ability === 'RESOLVE' && i === 2) v2 += 10;
+    }
+    if (stat === 'SPD') {
+      if (p1.ability === 'FLASH')  v1 += 7;
+      if (p2.ability === 'FLASH')  v2 += 7;
+    }
+
+    // Variance
+    v1 += Math.floor(rng() * 9);
+    v2 += Math.floor(rng() * 9);
+
+    v1 = Math.round(v1);
+    v2 = Math.round(v2);
+
+    let result;
+    if (v1 > v2)      { result = 'p1'; p1Score++; }
+    else if (v2 > v1) { result = 'p2'; p2Score++; }
+    else               { result = 'draw'; }
+
+    rounds.push({ stat, p1: v1, p2: v2, result });
+  }
+
+  // MIRROR COUNTER: post-battle reversal
+  for (let i = 0; i < rounds.length; i++) {
+    const r = rounds[i];
+    if (r.result === 'p2' && p1.ability === 'MIRROR COUNTER' && rng() < 0.25) {
+      r.result = 'p1'; r.stat += ' (MIRROR)'; p1Score++; p2Score--;
+    } else if (r.result === 'p1' && p2.ability === 'MIRROR COUNTER' && rng() < 0.25) {
+      r.result = 'p2'; r.stat += ' (MIRROR)'; p2Score++; p1Score--;
+    }
+  }
 
   return {
     rounds,
-    winner: p1Wins > p2Wins ? 'p1' : p2Wins > p1Wins ? 'p2' : 'draw',
+    winner: p1Score > p2Score ? 'p1' : p2Score > p1Score ? 'p2' : 'draw',
   };
+}
+
+// ── XP calculation (mirrors frontend) ────────────────────────────────────────
+
+function calcXP(myRarity, oppRarity, won, draw) {
+  const RARITY_VAL = { COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5 };
+  const mine = RARITY_VAL[myRarity] || 1;
+  const opp  = RARITY_VAL[oppRarity] || 1;
+  const diff = opp - mine;
+  if (won)  return Math.max(5, 50 + diff * 5);
+  if (draw) return 15;
+  return Math.max(5, 10 + diff * 3);
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -228,27 +326,34 @@ async function handleAllowlist(request, env) {
 }
 
 async function handleGameRegister(request, env) {
-  const { address, tokenId, name, image } = await request.json();
+  const body = await request.json();
+  const { address, tokenId, name, image, pwr, def, spd, element, ability, rarity, attributes } = body;
 
   if (!address || !isValidEthAddress(address)) {
     return json({ error: 'invalid', message: 'Invalid Ethereum address' }, 400);
   }
 
-  const addr = address.toLowerCase();
+  const addr       = address.toLowerCase();
+  const tid        = String(tokenId);
+  const cleanName  = (name || '').slice(0, 200) || null;
+  const cleanImage = (image || '').slice(0, 500) || null;
+  const traitsJson = attributes ? JSON.stringify(attributes).slice(0, 5000) : null;
 
-  // Upsert — update if already exists (but keep level/xp/wins/losses)
   const existing = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(addr).first();
 
   if (existing) {
     await env.DB.prepare(
-      'UPDATE game_cards SET token_id = ?, name = ?, image = ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?'
-    ).bind(String(tokenId), name || null, image || null, addr).run();
+      `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
+       pwr = ?, def = ?, spd = ?, element = ?, ability = ?, rarity = ?, traits_json = ?,
+       updated_at = CURRENT_TIMESTAMP WHERE address = ?`
+    ).bind(tid, cleanName, cleanImage, pwr ?? null, def ?? null, spd ?? null, element ?? null, ability ?? null, rarity ?? null, traitsJson, addr).run();
   } else {
     await env.DB.prepare(
-      'INSERT INTO game_cards (address, token_id, name, image) VALUES (?, ?, ?, ?)'
-    ).bind(addr, String(tokenId), name || null, image || null).run();
+      `INSERT INTO game_cards (address, token_id, name, image, pwr, def, spd, element, ability, rarity, traits_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(addr, tid, cleanName, cleanImage, pwr ?? null, def ?? null, spd ?? null, element ?? null, ability ?? null, rarity ?? null, traitsJson).run();
   }
 
   const card = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
@@ -275,10 +380,24 @@ async function handleQueue(request, env) {
   ).bind(addr).first();
 
   if (opponent) {
-    // Pair found — resolve battle
-    const p1Card   = card;
-    const p2Card   = JSON.parse(opponent.card_json);
-    const result   = resolveBattle(p1Card.tokenId, p2Card.tokenId);
+    // Pair found — resolve battle using stored stats
+    const p1Card = card;
+    const p2Card = JSON.parse(opponent.card_json);
+
+    // Look up stored stats from game_cards, fall back to hash derivation
+    const p1Row = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
+    const p2Row = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(opponent.address).first();
+
+    const p1Stats = p1Row && p1Row.pwr != null
+      ? { pwr: p1Row.pwr, def: p1Row.def, spd: p1Row.spd, element: p1Row.element, ability: p1Row.ability, rarity: p1Row.rarity, level: p1Row.level || 1 }
+      : { ...deriveStatsFromHash(p1Card.tokenId), level: p1Row?.level || 1 };
+
+    const p2Stats = p2Row && p2Row.pwr != null
+      ? { pwr: p2Row.pwr, def: p2Row.def, spd: p2Row.spd, element: p2Row.element, ability: p2Row.ability, rarity: p2Row.rarity, level: p2Row.level || 1 }
+      : { ...deriveStatsFromHash(p2Card.tokenId), level: p2Row?.level || 1 };
+
+    const seed   = battleSeed(p1Card.tokenId, p2Card.tokenId);
+    const result = resolveBattle(p1Stats, p2Stats, seed);
     const battleId = crypto.randomUUID();
     const winner   = result.winner === 'p1' ? addr : result.winner === 'p2' ? opponent.address : null;
 
@@ -290,15 +409,20 @@ async function handleQueue(request, env) {
       JSON.stringify(result.rounds), 'resolved'
     ).run();
 
-    // Update win/loss records
-    if (winner) {
-      const loser = winner === addr ? opponent.address : addr;
-      await env.DB.prepare(
-        'UPDATE game_cards SET wins = wins + 1, xp = xp + 50, updated_at = CURRENT_TIMESTAMP WHERE address = ?'
-      ).bind(winner).run();
-      await env.DB.prepare(
-        'UPDATE game_cards SET losses = losses + 1, xp = xp + 10, updated_at = CURRENT_TIMESTAMP WHERE address = ?'
-      ).bind(loser).run();
+    // XP calculation using rarity
+    const p1XP = calcXP(p1Stats.rarity, p2Stats.rarity, result.winner === 'p1', result.winner === 'draw');
+    const p2XP = calcXP(p2Stats.rarity, p1Stats.rarity, result.winner === 'p2', result.winner === 'draw');
+
+    // Update records
+    if (result.winner === 'p1') {
+      await env.DB.prepare('UPDATE game_cards SET wins = wins + 1, xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p1XP, addr).run();
+      await env.DB.prepare('UPDATE game_cards SET losses = losses + 1, xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p2XP, opponent.address).run();
+    } else if (result.winner === 'p2') {
+      await env.DB.prepare('UPDATE game_cards SET losses = losses + 1, xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p1XP, addr).run();
+      await env.DB.prepare('UPDATE game_cards SET wins = wins + 1, xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p2XP, opponent.address).run();
+    } else {
+      await env.DB.prepare('UPDATE game_cards SET xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p1XP, addr).run();
+      await env.DB.prepare('UPDATE game_cards SET xp = xp + ?, updated_at = CURRENT_TIMESTAMP WHERE address = ?').bind(p2XP, opponent.address).run();
     }
 
     // Level up check

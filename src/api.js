@@ -23,11 +23,19 @@ export async function apiGet(path) {
 /** Register / sync card state with server */
 export async function syncCard(address, card) {
   try {
+    const stats = card.pwr != null ? card : {};
     const data = await apiPost('/api/game/register', {
       address,
-      tokenId: card.tokenId,
-      name:    card.name,
-      image:   card.image,
+      tokenId:    card.tokenId,
+      name:       card.name,
+      image:      card.image,
+      pwr:        stats.pwr   ?? null,
+      def:        stats.def   ?? null,
+      spd:        stats.spd   ?? null,
+      element:    stats.element    ?? null,
+      ability:    stats.ability    ?? null,
+      rarity:     stats.rarity     ?? null,
+      attributes: card.attributes  ?? [],
     });
     return data.card || null;
   } catch {
