@@ -28,6 +28,13 @@ const modal = createAppKit({
   },
 });
 
+/** Strip CAIP-10 prefix (e.g. "eip155:1:0x…" → "0x…") */
+function cleanAddress(raw) {
+  if (!raw) return null;
+  const hex = raw.includes(':') ? raw.split(':').pop() : raw;
+  return hex.toLowerCase();
+}
+
 /** Open the wallet modal and return a lowercase address */
 export async function connectWallet() {
   await modal.open();
@@ -38,21 +45,21 @@ export async function connectWallet() {
     const unsub = modal.subscribeEvents((event) => {
       if (resolved) return;
       if (event.data?.event === 'CONNECT_SUCCESS' || event.data?.event === 'MODAL_CLOSE') {
-        const addr = modal.getAddress();
+        const addr = cleanAddress(modal.getAddress());
         if (addr) {
           resolved = true;
           unsub?.();
-          resolve(addr.toLowerCase());
+          resolve(addr);
         }
       }
     });
 
     // Already connected — resolve immediately
-    const addr = modal.getAddress();
+    const addr = cleanAddress(modal.getAddress());
     if (addr) {
       resolved = true;
       unsub?.();
-      resolve(addr.toLowerCase());
+      resolve(addr);
     }
 
     setTimeout(() => {
@@ -73,8 +80,7 @@ export async function disconnectWallet() {
 /** Get currently connected address (or null) */
 export function getConnectedAddress() {
   try {
-    const addr = modal.getAddress();
-    return addr ? addr.toLowerCase() : null;
+    return cleanAddress(modal.getAddress());
   } catch {
     return null;
   }

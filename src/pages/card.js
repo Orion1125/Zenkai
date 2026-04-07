@@ -27,13 +27,23 @@ export function deriveStats(tokenId, attributes) {
 
 async function fetchNFTs(address) {
   const key = import.meta.env.VITE_ALCHEMY_KEY;
-  if (!key) return [];
+  if (!key) {
+    console.warn('[ZENKAI] VITE_ALCHEMY_KEY is empty — cannot fetch NFTs');
+    return [];
+  }
+  if (!address || !address.startsWith('0x')) {
+    console.warn('[ZENKAI] Invalid wallet address:', address);
+    return [];
+  }
 
   const buildUrl = (chain) => {
-    let url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
-      + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=50`;
-    if (NFT_CONTRACT) url += `&contractAddresses[]=${encodeURIComponent(NFT_CONTRACT)}`;
-    return url;
+    const params = new URLSearchParams({
+      owner: address,
+      withMetadata: 'true',
+      pageSize: '50',
+    });
+    if (NFT_CONTRACT) params.append('contractAddresses[]', NFT_CONTRACT);
+    return `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner?${params}`;
   };
 
   const parseNFTs = (data) =>
@@ -51,15 +61,21 @@ async function fetchNFTs(address) {
       CHAINS.map(chain =>
         fetch(buildUrl(chain))
           .then(r => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            if (!r.ok) throw new Error(`${chain} HTTP ${r.status}`);
             return r.json();
           })
           .then(d => parseNFTs(d))
-          .catch(() => [])
+          .catch(err => {
+            console.warn(`[ZENKAI] NFT fetch failed on ${chain}:`, err.message);
+            return [];
+          })
       )
     );
-    return results.find(r => r.length > 0) || [];
-  } catch {
+    const found = results.find(r => r.length > 0);
+    if (!found) console.warn('[ZENKAI] No NFTs found across chains for', address);
+    return found || [];
+  } catch (err) {
+    console.warn('[ZENKAI] fetchNFTs error:', err);
     return [];
   }
 }
