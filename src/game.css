@@ -626,7 +626,7 @@ a.zk-card-id {
    ══════════════════════════════════════════════ */
 
 .home-page {
-  max-width: 360px;
+  max-width: 380px;
   padding-bottom: 24px;
 }
 
@@ -634,7 +634,7 @@ a.zk-card-id {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .home-logo {
@@ -643,29 +643,117 @@ a.zk-card-id {
   margin-bottom: 0 !important;
 }
 
-.home-addr {
-  font-family: var(--font-body);
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--text-muted);
+.home-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0,225,162,0.08);
+  border: 1px solid rgba(0,225,162,0.2);
+  border-radius: 20px;
+  padding: 4px 10px 4px 8px;
 }
 
+.home-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #00e1a2;
+  box-shadow: 0 0 6px #00e1a2;
+  animation: dotPulse 2s ease-in-out infinite;
+}
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+.home-addr {
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(0,225,162,0.85);
+}
+
+/* Quick stats banner */
+.home-stats-banner {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.home-qstat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+}
+
+.home-qstat-val {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+
+.home-qstat-label {
+  font-size: 0.5rem;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+/* XP progress bar */
+.home-xp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.home-xp-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.home-xp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold-dim, #b89b00), var(--gold));
+  border-radius: 2px;
+  transition: width 0.8s ease;
+}
+
+.home-xp-text {
+  font-size: 0.55rem;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Card display */
 .home-card-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .home-card-wrap .zk-card {
-  width: 180px;
+  width: 170px;
 }
 
+/* Nav grid */
 .home-nav {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 8px;
+  margin-bottom: 14px;
 }
 
 .home-nav-btn {
@@ -682,6 +770,11 @@ a.zk-card-id {
   color: inherit;
 }
 
+.home-nav-btn.home-nav-primary {
+  border-color: rgba(255,208,0,0.25);
+  background: rgba(255,208,0,0.07);
+}
+
 .home-nav-btn:hover {
   border-color: rgba(255,208,0,0.35);
   background: rgba(255,208,0,0.08);
@@ -693,21 +786,123 @@ a.zk-card-id {
 }
 
 .home-nav-icon {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   line-height: 1;
 }
 
 .home-nav-label {
   font-family: var(--font-display);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   letter-spacing: 2px;
   color: var(--gold);
 }
 
 .home-nav-desc {
-  font-size: 0.58rem;
+  font-size: 0.55rem;
   color: var(--text-dim);
   letter-spacing: 0.5px;
+}
+
+/* Sections */
+.home-section {
+  margin-bottom: 14px;
+}
+
+.home-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.home-section-title {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 3px;
+  color: var(--text-muted);
+}
+
+.home-section-badge {
+  font-size: 0.48rem;
+  letter-spacing: 2px;
+  font-weight: 700;
+  color: #00e1a2;
+  background: rgba(0,225,162,0.1);
+  border: 1px solid rgba(0,225,162,0.2);
+  border-radius: 3px;
+  padding: 2px 6px;
+  animation: dotPulse 2s ease-in-out infinite;
+}
+
+/* Activity feed */
+.home-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.home-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 5px;
+  font-size: 0.72rem;
+}
+
+.home-feed-item.feed-dim {
+  opacity: 0.5;
+}
+
+.feed-icon {
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.feed-text {
+  flex: 1;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+.feed-time {
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+/* Season bar */
+.home-season-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 10px;
+  background: rgba(255,208,0,0.03);
+  border: 1px solid rgba(255,208,0,0.08);
+  border-radius: 6px;
+}
+
+.home-season-label {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  letter-spacing: 3px;
+  color: var(--gold);
+}
+
+.home-season-sep {
+  color: rgba(255,208,0,0.2);
+  font-size: 0.5rem;
+}
+
+.home-season-text {
+  font-size: 0.58rem;
+  letter-spacing: 2px;
+  color: var(--text-dim);
 }
 
 .home-disconnect {

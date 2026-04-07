@@ -18,21 +18,58 @@ export function renderHome(app) {
   if (!card) { navigate('/card'); return; }
 
   const shortAddr = `${address.slice(0, 6)}…${address.slice(-4)}`;
+  const stats = card.level ? card : { level: 1, xp: 0 };
+  const xpNext = (stats.level || 1) * 100;
+  const xpPct = Math.min(100, Math.round(((stats.xp || 0) / xpNext) * 100));
 
   const el = document.createElement('div');
   el.className = 'card home-page';
   el.innerHTML = `
     <div class="card-accent"></div>
 
+    <!-- Header -->
     <div class="home-top">
       <div class="brand-logo home-logo">ZENKAI</div>
-      <span class="home-addr">${esc(shortAddr)}</span>
+      <div class="home-status-pill">
+        <span class="home-status-dot"></span>
+        <span class="home-addr">${esc(shortAddr)}</span>
+      </div>
     </div>
 
+    <!-- Quick stats banner -->
+    <div class="home-stats-banner">
+      <div class="home-qstat">
+        <span class="home-qstat-val">LVL ${stats.level || 1}</span>
+        <span class="home-qstat-label">RANK</span>
+      </div>
+      <div class="home-qstat">
+        <span class="home-qstat-val">${stats.xp || 0}</span>
+        <span class="home-qstat-label">XP</span>
+      </div>
+      <div class="home-qstat">
+        <span class="home-qstat-val">0W</span>
+        <span class="home-qstat-label">WINS</span>
+      </div>
+      <div class="home-qstat">
+        <span class="home-qstat-val">--</span>
+        <span class="home-qstat-label">STREAK</span>
+      </div>
+    </div>
+
+    <!-- XP progress -->
+    <div class="home-xp-row">
+      <div class="home-xp-track">
+        <div class="home-xp-fill" style="width:${xpPct}%"></div>
+      </div>
+      <span class="home-xp-text">${stats.xp || 0} / ${xpNext} XP</span>
+    </div>
+
+    <!-- Card display -->
     <div class="home-card-wrap" id="home-card"></div>
 
+    <!-- Main navigation grid -->
     <nav class="home-nav">
-      <button class="home-nav-btn" data-route="/arena">
+      <button class="home-nav-btn home-nav-primary" data-route="/arena">
         <div class="home-nav-icon">⚔️</div>
         <span class="home-nav-label">BATTLE</span>
         <span class="home-nav-desc">Enter the arena</span>
@@ -53,6 +90,39 @@ export function renderHome(app) {
         <span class="home-nav-desc">Top warriors</span>
       </button>
     </nav>
+
+    <!-- Activity feed -->
+    <div class="home-section">
+      <div class="home-section-header">
+        <span class="home-section-title">RECENT ACTIVITY</span>
+        <span class="home-section-badge">LIVE</span>
+      </div>
+      <div class="home-feed" id="home-feed">
+        <div class="home-feed-item">
+          <span class="feed-icon">⚡</span>
+          <span class="feed-text">Warrior awakened</span>
+          <span class="feed-time">just now</span>
+        </div>
+        <div class="home-feed-item feed-dim">
+          <span class="feed-icon">🔗</span>
+          <span class="feed-text">Wallet connected</span>
+          <span class="feed-time">just now</span>
+        </div>
+        <div class="home-feed-item feed-dim">
+          <span class="feed-icon">✍️</span>
+          <span class="feed-text">Ownership verified</span>
+          <span class="feed-time">just now</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Season info -->
+    <div class="home-season-bar">
+      <span class="home-season-label">SEASON 1</span>
+      <span class="home-season-sep">•</span>
+      <span class="home-season-text">GENESIS</span>
+      <span class="home-season-timer" id="season-timer"></span>
+    </div>
 
     <button class="btn-ghost home-disconnect" id="btn-disc-home">DISCONNECT</button>
   `;
