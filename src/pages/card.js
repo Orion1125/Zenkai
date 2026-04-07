@@ -70,25 +70,7 @@ async function fetchNFTs(address) {
     console.warn('[ZENKAI] Unfiltered fetch failed:', err.message);
   }
 
-  // Strategy 3: try other chains with contract filter
-  const otherChains = ['base-mainnet', 'polygon-mainnet', 'arb-mainnet', 'opt-mainnet'];
-  try {
-    const results = await Promise.all(
-      otherChains.map(chain => {
-        const url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
-          + `?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=50`
-          + (NFT_CONTRACT ? `&contractAddresses%5B%5D=${encodeURIComponent(NFT_CONTRACT)}` : '');
-        return fetch(url)
-          .then(r => r.ok ? r.json() : { ownedNfts: [] })
-          .then(d => parseNFTs(d))
-          .catch(() => []);
-      })
-    );
-    const found = results.find(r => r.length > 0);
-    if (found) return found;
-  } catch {}
-
-  console.warn('[ZENKAI] No NFTs found for', address);
+  console.warn('[ZENKAI] No Zenkai NFTs found for', address);
   return [];
 }
 
