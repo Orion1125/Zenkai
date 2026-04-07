@@ -34,20 +34,47 @@ const RARITY_COLOR = {
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
 
+// Try multiple chains — return results from whichever one has the NFT
+const CHAINS = [
+  'eth-mainnet',
+  'base-mainnet',
+  'polygon-mainnet',
+  'arb-mainnet',
+  'opt-mainnet',
+];
+
 async function fetchNFTs(address) {
   const key = import.meta.env.VITE_ALCHEMY_KEY;
   if (!key) return [];
-  try {
-    let url = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=20`;
+
+  const buildUrl = (chain) => {
+    let url = `https://${chain}.g.alchemy.com/nft/v3/${key}/getNFTsForOwner`
+      + `?owner=${address}&withMetadata=true&pageSize=50`
+      + `&includeFilters[]=SPAM`;          // include everything, don't auto-filter
     if (NFT_CONTRACT) url += `&contractAddresses[]=${NFT_CONTRACT}`;
-    const res  = await fetch(url);
-    const data = await res.json();
-    return (data.ownedNfts || []).map(n => ({
-      tokenId:  n.tokenId  || '0',
-      name:     n.name     || `ZENKAI #${parseInt(n.tokenId, 16) || n.tokenId}`,
+    return url;
+  };
+
+  const parseNFTs = (data) =>
+    (data.ownedNfts || []).map(n => ({
+      tokenId:  n.tokenId || '0',
+      name:     n.name    || `ZENKAI #${n.tokenId}`,
       image:    n.image?.cachedUrl || n.image?.originalUrl || '',
       contract: n.contract?.address || '',
     }));
+
+  // Fire all chains in parallel, return first non-empty result
+  try {
+    const results = await Promise.all(
+      CHAINS.map(chain =>
+        fetch(buildUrl(chain))
+          .then(r => r.json())
+          .then(d => parseNFTs(d))
+          .catch(() => [])
+      )
+    );
+    // Return the first chain that has NFTs, or empty
+    return results.find(r => r.length > 0) || [];
   } catch {
     return [];
   }
