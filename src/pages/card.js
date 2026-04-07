@@ -32,16 +32,19 @@ const RARITY_COLOR = {
   LEGENDARY: '#FFD000',
 };
 
+const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
+
 async function fetchNFTs(address) {
   const key = import.meta.env.VITE_ALCHEMY_KEY;
   if (!key) return [];
   try {
-    const url  = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=20`;
+    let url = `https://eth-mainnet.g.alchemy.com/nft/v3/${key}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=20`;
+    if (NFT_CONTRACT) url += `&contractAddresses[]=${NFT_CONTRACT}`;
     const res  = await fetch(url);
     const data = await res.json();
     return (data.ownedNfts || []).map(n => ({
       tokenId:  n.tokenId  || '0',
-      name:     n.name     || `#${n.tokenId}`,
+      name:     n.name     || `ZENKAI #${parseInt(n.tokenId, 16) || n.tokenId}`,
       image:    n.image?.cachedUrl || n.image?.originalUrl || '',
       contract: n.contract?.address || '',
     }));
