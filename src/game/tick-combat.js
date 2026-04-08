@@ -78,7 +78,10 @@ function createState(card, actorKey, seed) {
     hitsTaken: 0,
     hitsDealt: 0,
     openingUsed: false,
+    firstStrikeUsed: false,
     surviveUsed: false,
+    bleedReflectUsed: false,
+    fluxInversionUsed: false,
     cycleActions: 0,
     lastActTick: 0,
     temporary: { pwr: 0, spd: 0, damageTakenMult: 0, exposeTicks: 0, fluxTicks: 0 },
@@ -141,6 +144,19 @@ function applyCycleEffects(state, tick, notes) {
     state.statuses.chill = 0;
     state.statuses.expose = 0;
     notes.push('cleanse');
+  }
+
+  // VOID fluxDuration: once per fight, invert one active debuff into a small buff
+  if (state.classKey === 'VOID' && !state.fluxInversionUsed) {
+    const activeDebuffs = Object.keys(state.statuses).filter((k) => state.statuses[k] > 0);
+    if (activeDebuffs.length > 0) {
+      const target = activeDebuffs[Math.floor(state.rng() * activeDebuffs.length)];
+      state.statuses[target] = 0;
+      state.temporary.pwr += 3;
+      state.temporary.fluxTicks = Math.max(state.temporary.fluxTicks, 5);
+      state.fluxInversionUsed = true;
+      notes.push(`flux inversion: ${target} → +3 PWR`);
+    }
   }
 
   // Status damage ticks
@@ -213,8 +229,8 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
     notes.push(`opening +${powerCfg.openingBurst}`);
   }
   if (powerCfg.lowHpBonus && attacker.hp / attacker.hpMax <= 0.35) damage += powerCfg.lowHpBonus;
-  if (speedCfg.firstStrike && secondInCycle === 0) damage += speedCfg.firstStrike;
-  if (powerCfg.firstStrike && secondInCycle === 0) damage += powerCfg.firstStrike;
+  if (!attacker.firstStrikeUsed && speedCfg.firstStrike) { damage += speedCfg.firstStrike; attacker.firstStrikeUsed = true; notes.push(`first strike +${speedCfg.firstStrike}`); }
+  if (!attacker.firstStrikeUsed && powerCfg.firstStrike) { damage += powerCfg.firstStrike; attacker.firstStrikeUsed = true; notes.push(`first strike +${powerCfg.firstStrike}`); }
   if (powerCfg.shieldBreak && defender.shield > 0) damage += powerCfg.shieldBreak;
   if (powerCfg.shieldDamageBonus && defender.shield > 0) damage += powerCfg.shieldDamageBonus;
 
@@ -233,9 +249,17 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
 
   // Status application (with EARTH resist + Adaptive shield-on-debuff)
   if (attacker.classKey === 'FIRE' && attacker.rng() < 0.25) {
-    if (applyStatus(defender, 'burn', 2)) notes.push('burn applied');
+    // FIRE igniteDot passive: burn ticks deal +2 bonus damage
+    if (applyStatus(defender, 'burn', 2 + 2)) notes.push('burn applied (ignite)');
   }
-  if (attacker.classKey === 'WATER') applyStatus(defender, 'chill', 0.08);
+  // WATER chillOnCycleHit: first hit each cycle applies Chill
+  if (attacker.classKey === 'WATER') {
+    applyStatus(defender, 'chill', 0.08);
+    if (secondInCycle === 0) {
+      applyStatus(defender, 'chill', 0.12);
+      notes.push('cycle chill');
+    }
+  }
 
   // Base crit chance (5%) + equipment + class bonuses
   let critChance = 0.05 + (speedCfg.critChance || 0) + (powerCfg.critChance || 0);
@@ -278,8 +302,13 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
     const blocked = Math.min(defender.guard, damage);
     damage -= blocked;
     defender.guard = Math.max(0, defender.guard - blocked);
-    if (blocked > 0) notes.push(`guard ${blocked}`);
-    if (targetHpCfg.healOnGuard) applyHeal(defender, targetHpCfg.healOnGuard);
+    if (blocked > 0) {
+      notes.push(`guard ${blocked}`);
+      if (targetHpCfg.healOnGuard) {
+        const guardHeal = applyHeal(defender, targetHpCfg.healOnGuard);
+        if (guardHeal > 0) notes.push(`guard heal +${guardHeal}`);
+      }
+    }
   }
 
   if (defender.shield > 0) {
@@ -312,6 +341,13 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
   attacker.damageDealt += hpDamage;
   attacker.hitsDealt += 1;
   defender.hitsTaken += 1;
+
+  // SHADOW bleedReflect: first hit taken inflicts Bleed on the attacker
+  if (defender.classKey === 'SHADOW' && !defender.bleedReflectUsed && hpDamage > 0) {
+    applyStatus(attacker, 'bleed', 2);
+    defender.bleedReflectUsed = true;
+    notes.push('bleed reflect');
+  }
 
   const lifesteal = (powerCfg.lifesteal || 0) + (attacker.classKey === 'SHADOW' ? 0.04 : 0);
   if (lifesteal > 0 && hpDamage > 0) {

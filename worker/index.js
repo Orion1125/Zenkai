@@ -47,19 +47,27 @@ function corsHeaders(request) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Current request reference for CORS (set at top of each fetch)
-let _req = null;
+// Per-request context holder (isolated via AsyncLocalStorage-like pattern)
+let _currentRequest = null;
 
-function json(data, status = 200) {
-  const cors = _req ? corsHeaders(_req) : { 'Access-Control-Allow-Origin': '*' };
+function withRequest(request, fn) {
+  const prev = _currentRequest;
+  _currentRequest = request;
+  try { return fn(); } finally { _currentRequest = prev; }
+}
+
+function json(data, status = 200, request) {
+  const req = request || _currentRequest;
+  const cors = req ? corsHeaders(req) : { 'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0] };
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
 }
 
-function csvResponse(text, filename) {
-  const cors = _req ? corsHeaders(_req) : { 'Access-Control-Allow-Origin': '*' };
+function csvResponse(text, filename, request) {
+  const req = request || _currentRequest;
+  const cors = req ? corsHeaders(req) : { 'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0] };
   return new Response(text, {
     headers: {
       ...cors,
@@ -79,6 +87,14 @@ function getClientIp(request) {
     request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
     'unknown'
   );
+}
+
+function requireAdmin(request, env) {
+  const token = env.ADMIN_TOKEN;
+  if (!token) return json({ error: 'admin_not_configured' }, 503);
+  const auth = request.headers.get('Authorization') || '';
+  if (auth !== `Bearer ${token}`) return json({ error: 'unauthorized' }, 401);
+  return null;
 }
 
 // ── Stat derivation (hash fallback — used when no attributes stored) ─────────
@@ -1019,7 +1035,10 @@ async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId
   const p1Stats = buildCardStats(p1Row, selfCard);
   const p2Stats = buildCardStats(p2Row, oppCard);
   const seed    = battleSeed(String(selfCard.tokenId), String(oppCard.tokenId));
-  const result  = resolveBattle(selfCard, oppCard, seed);
+  // Use DB-authoritative stats for battle resolution (p1Row/p2Row), falling back to queue snapshot only if DB row missing
+  const p1Battle = p1Row ? { ...selfCard, ...p1Row } : selfCard;
+  const p2Battle = p2Row ? { ...oppCard, ...p2Row } : oppCard;
+  const result  = resolveBattle(p1Battle, p2Battle, seed);
   const winner  = result.winner === 'p1' ? selfAddr : result.winner === 'p2' ? oppAddr : null;
 
   const p1XP       = calcXP(p1Stats.rarity, p2Stats.rarity, result.winner === 'p1', result.winner === 'draw');
@@ -1293,7 +1312,7 @@ async function attemptMatchForTicket(env, address, ticketId) {
 
 export default {
   async fetch(request, env) {
-    _req = request;
+    _currentRequest = request;
     const url    = new URL(request.url);
     const path   = url.pathname;
     const method = request.method;
@@ -1312,12 +1331,16 @@ export default {
         return handleSubmitWallet(request, env);
       }
       if (method === 'GET' && path === '/api/wallets') {
+        const denied = requireAdmin(request, env);
+        if (denied) return denied;
         const rows = await env.DB.prepare(
           'SELECT address, handle, created_at FROM wallets ORDER BY created_at ASC'
         ).all();
         return json({ count: rows.results.length, wallets: rows.results });
       }
       if (method === 'GET' && path === '/api/wallets/csv') {
+        const denied = requireAdmin(request, env);
+        if (denied) return denied;
         const rows = await env.DB.prepare(
           'SELECT address, handle, created_at FROM wallets ORDER BY created_at ASC'
         ).all();
@@ -1331,6 +1354,8 @@ export default {
         return handleAllowlist(request, env);
       }
       if (method === 'GET' && path === '/api/allowlist/fcfs/csv') {
+        const denied = requireAdmin(request, env);
+        if (denied) return denied;
         const rows = await env.DB.prepare(
           'SELECT address, handle, created_at FROM allowlist_fcfs ORDER BY created_at ASC'
         ).all();
@@ -1339,6 +1364,8 @@ export default {
         return csvResponse(csv, 'zenkai_fcfs.csv');
       }
       if (method === 'GET' && path === '/api/allowlist/gtd/csv') {
+        const denied = requireAdmin(request, env);
+        if (denied) return denied;
         const rows = await env.DB.prepare(
           'SELECT address, handle, created_at FROM allowlist_gtd ORDER BY created_at ASC'
         ).all();
@@ -1451,8 +1478,8 @@ export default {
       return json({ error: 'not_found' }, 404);
 
     } catch (err) {
-      console.error(err);
-      return json({ error: 'server_error', message: err.message }, 500);
+      console.error('[zenkai]', err?.message || err);
+      return json({ error: 'server_error' }, 500);
     }
   },
 };
@@ -1527,11 +1554,22 @@ async function handleGameRegister(request, env) {
   const cleanImage = (image || '').slice(0, 500) || null;
   const traitsJson = attributes ? JSON.stringify(attributes).slice(0, 5000) : null;
 
+  // Validate and clamp stat values to prevent arbitrary stat injection
+  const VALID_ELEMENTS = ['FIRE', 'WATER', 'EARTH', 'SHADOW', 'WIND', 'VOID'];
+  const VALID_RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY'];
+  const clampStat = (v, min, max) => v != null ? Math.min(max, Math.max(min, Math.round(Number(v) || 0))) : null;
+  const safePwr = clampStat(pwr, 1, 100);
+  const safeDef = clampStat(def, 1, 100);
+  const safeSpd = clampStat(spd, 1, 100);
+  const safeElement = VALID_ELEMENTS.includes(String(element).toUpperCase()) ? String(element).toUpperCase() : null;
+  const safeRarity = VALID_RARITIES.includes(String(rarity).toUpperCase()) ? String(rarity).toUpperCase() : 'COMMON';
+  const safeAbility = ability ? String(ability).slice(0, 50) : null;
+
   const existing = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(addr).first();
-  const seedHp = hp ?? (180 + ((Number(def) || 50) * 3) + (((existing?.level || 1)) * 10));
-  const seedCard = { tokenId: tid, pwr, def, hp: seedHp, spd, element, ability, rarity, level: existing?.level || 1 };
+  const seedHp = clampStat(hp, 100, 1000) ?? (180 + ((Number(safeDef) || 50) * 3) + (((existing?.level || 1)) * 10));
+  const seedCard = { tokenId: tid, pwr: safePwr, def: safeDef, hp: seedHp, spd: safeSpd, element: safeElement, ability: safeAbility, rarity: safeRarity, level: existing?.level || 1 };
   const seededState = getCompetitiveState(existing, seedCard);
 
   if (existing) {
@@ -1547,13 +1585,13 @@ async function handleGameRegister(request, env) {
       tid,
       cleanName,
       cleanImage,
-      pwr ?? null,
-      def ?? null,
+      safePwr,
+      safeDef,
       seedHp,
-      spd ?? null,
-      element ?? null,
-      ability ?? null,
-      rarity ?? null,
+      safeSpd,
+      safeElement,
+      safeAbility,
+      safeRarity,
       traitsJson,
       seededState.rating,
       seededState.rd,
@@ -1571,13 +1609,13 @@ async function handleGameRegister(request, env) {
       tid,
       cleanName,
       cleanImage,
-      pwr ?? null,
-      def ?? null,
+      safePwr,
+      safeDef,
       seedHp,
-      spd ?? null,
-      element ?? null,
-      ability ?? null,
-      rarity ?? null,
+      safeSpd,
+      safeElement,
+      safeAbility,
+      safeRarity,
       traitsJson,
       seededState.rating,
       seededState.rd,
@@ -1653,7 +1691,6 @@ async function handleEquipmentPurchase(request, env) {
     return json({ error: 'invalid', message: 'Current card class does not match this equipment class' }, 400);
   }
 
-  const progress = await getPlayerProgress(env, addr);
   const trackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
   const currentLevel = trackLevels[track.trackId] || 1;
   if (currentLevel >= 10) {
@@ -1661,25 +1698,29 @@ async function handleEquipmentPurchase(request, env) {
   }
 
   const nextLevel = track.levels[currentLevel];
-  if (Number(progress?.forge_shards || 0) < nextLevel.price) {
+
+  // Atomic conditional UPDATE — prevents double-spend race condition
+  // The WHERE clause ensures shards >= cost; if concurrent request already spent them,
+  // this UPDATE affects 0 rows and we detect the failure.
+  const spendResult = await env.DB.prepare(
+    `UPDATE player_progress
+        SET forge_shards = forge_shards - ?,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE address = ? AND forge_shards >= ?`
+  ).bind(nextLevel.price, addr, nextLevel.price).run();
+
+  const rowsChanged = Number(spendResult.meta?.changes || spendResult.meta?.rows_written || 0);
+  if (rowsChanged === 0) {
     return json({ error: 'insufficient_forge_shards', message: 'Not enough Forge Shards' }, 400);
   }
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO equipment_track_levels (address, class_key, track_id, current_level, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(address, track_id) DO UPDATE SET
-         current_level = excluded.current_level,
-         updated_at = CURRENT_TIMESTAMP`
-    ).bind(addr, normalizedClass, track.trackId, currentLevel + 1),
-    env.DB.prepare(
-      `UPDATE player_progress
-          SET forge_shards = forge_shards - ?,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE address = ?`
-    ).bind(nextLevel.price, addr),
-  ]);
+  await env.DB.prepare(
+    `INSERT INTO equipment_track_levels (address, class_key, track_id, current_level, updated_at)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(address, track_id) DO UPDATE SET
+       current_level = excluded.current_level,
+       updated_at = CURRENT_TIMESTAMP`
+  ).bind(addr, normalizedClass, track.trackId, currentLevel + 1).run();
 
   const updatedProgress = await getPlayerProgress(env, addr);
   const updatedTrackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
