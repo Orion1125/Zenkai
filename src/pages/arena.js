@@ -7,7 +7,7 @@ import { buildCardHTML, buildCardBack, deriveStats } from './card.js';
 import { playBattleHit, playVictory, playDefeat }   from '../sound.js';
 import { syncCard, enterQueue, pollQueue, cancelQueue } from '../api.js';
 import { resolveBattle, calcXP, NPC_OPPONENTS }      from '../traits.js';
-import { buildEquipmentCardView, getForgeShardReward, getStarterLoadout } from '../game/equipment-system.js';
+import { buildEquipmentCardView, getForgeShardReward, getFreeTrackLevels, getStarterLoadout } from '../game/equipment-system.js';
 
 const HAS_SERVER = !!import.meta.env.VITE_API_URL;
 
@@ -271,13 +271,18 @@ async function startBattleServerV2(wrap, myCard, address) {
 
   const won  = result.winner === 'p1';
   const draw = result.winner === 'draw';
+  const previousForgeShards = parseInt(localStorage.getItem('zenkai_forge_shards') || String(myCard.forge_shards || 0), 10) || 0;
 
   if (won) playVictory(); else if (!draw) playDefeat();
 
   if (result.card) {
     myCard.level = result.card.level;
     myCard.xp    = result.card.xp;
+    myCard.wins = result.card.wins ?? myCard.wins;
+    myCard.losses = result.card.losses ?? myCard.losses;
+    myCard.hp = result.card.hp ?? myCard.hp;
     myCard.equipmentLoadout = result.card.equipmentLoadout || myCard.equipmentLoadout;
+    myCard.equipmentLevels = result.card.equipmentLevels || myCard.equipmentLevels;
     myCard.forge_shards = result.card.forge_shards ?? myCard.forge_shards;
     myCard.competitive_rating = result.card.competitive_rating ?? myCard.competitive_rating;
     myCard.competitive_tier = result.card.competitive_tier ?? myCard.competitive_tier;
@@ -314,9 +319,19 @@ async function startBattleLocal(wrap, myCard, address) {
   await wait(1200);
 
   const rawOpp   = pickOpponent(myCard.tokenId);
-  const opp      = buildEquipmentCardView(rawOpp, getStarterLoadout(rawOpp.element), rawOpp.element);
+  const opp      = buildEquipmentCardView(
+    rawOpp,
+    getStarterLoadout(rawOpp.element),
+    getFreeTrackLevels(rawOpp.element),
+    rawOpp.element
+  );
   const myStats  = deriveStats(myCard.tokenId, myCard.attributes);
-  const myBattleCard = buildEquipmentCardView({ ...myCard, ...myStats, level: myCard.level || 1, ability: myStats.ability, rarity: myStats.rarity, element: myStats.element }, myCard.equipmentLoadout, myStats.element);
+  const myBattleCard = buildEquipmentCardView(
+    { ...myCard, ...myStats, level: myCard.level || 1, ability: myStats.ability, rarity: myStats.rarity, element: myStats.element },
+    myCard.equipmentLoadout,
+    myCard.equipmentLevels,
+    myStats.element
+  );
   const oppStats = { ...opp };
 
   // Reveal opponent
@@ -351,9 +366,11 @@ async function startBattleLocal(wrap, myCard, address) {
   localStorage.setItem('zenkai_card', JSON.stringify(myCard));
 
   if (won) {
-    localStorage.setItem('zenkai_wins', String(parseInt(localStorage.getItem('zenkai_wins') || '0') + 1));
+    myCard.wins = (myCard.wins || 0) + 1;
+    localStorage.setItem('zenkai_wins', String(myCard.wins));
   } else if (!draw) {
-    localStorage.setItem('zenkai_losses', String(parseInt(localStorage.getItem('zenkai_losses') || '0') + 1));
+    myCard.losses = (myCard.losses || 0) + 1;
+    localStorage.setItem('zenkai_losses', String(myCard.losses));
   }
 
   const forgeReward = getForgeShardReward(won ? 'win' : draw ? 'draw' : 'loss', 1500, 1500);

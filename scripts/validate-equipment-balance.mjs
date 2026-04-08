@@ -1,13 +1,27 @@
 import {
   CARD_CLASSES,
   getEquipmentCatalogByClass,
+  getFreeTrackLevels,
   getStarterLoadout,
   resolveBattle,
 } from '../src/game/equipment-system.js';
 
-function buildBaselineCard(cardClass, loadout) {
+const TARGET_WIN_RATE = 0.55;
+const STARTER_MIRROR_SEEDS = 2000;
+const FIELD_SAMPLE_SIZE = 48;
+const TEST_LEVELS = [1, 5, 10];
+
+function buildTrackLevels(cardClass, level) {
+  const levels = getFreeTrackLevels(cardClass);
+  for (const trackId of Object.keys(levels)) {
+    levels[trackId] = level;
+  }
+  return levels;
+}
+
+function buildBaselineCard(cardClass, loadout, trackLevels) {
   return {
-    tokenId: `${cardClass}-test`,
+    tokenId: `${cardClass}-${loadout.powerTrackId}-${loadout.hpTrackId}-${loadout.speedTrackId}`,
     name: `${cardClass} baseline`,
     level: 1,
     pwr: 65,
@@ -17,25 +31,26 @@ function buildBaselineCard(cardClass, loadout) {
     rarity: 'RARE',
     ability: null,
     equipmentLoadout: loadout,
+    equipmentLevels: trackLevels,
   };
 }
 
 function loadoutsForClass(cardClass) {
-  const items = getEquipmentCatalogByClass(cardClass);
+  const tracks = getEquipmentCatalogByClass(cardClass);
   const bySlot = {
-    power: items.filter((item) => item.slot === 'power'),
-    defense: items.filter((item) => item.slot === 'defense'),
-    speed: items.filter((item) => item.slot === 'speed'),
+    power: tracks.filter((track) => track.slot === 'power'),
+    hp: tracks.filter((track) => track.slot === 'hp'),
+    speed: tracks.filter((track) => track.slot === 'speed'),
   };
 
   const loadouts = [];
   for (const power of bySlot.power) {
-    for (const defense of bySlot.defense) {
+    for (const hp of bySlot.hp) {
       for (const speed of bySlot.speed) {
         loadouts.push({
-          powerItemId: power.id,
-          defenseItemId: defense.id,
-          speedItemId: speed.id,
+          powerTrackId: power.trackId,
+          hpTrackId: hp.trackId,
+          speedTrackId: speed.trackId,
         });
       }
     }
@@ -43,15 +58,16 @@ function loadoutsForClass(cardClass) {
   return loadouts;
 }
 
-function hasRealDrawback(item) {
-  const effects = item.effects.join(' ').toLowerCase();
+function hasRealDrawback(track) {
+  const config = track.levels[0]?.config || {};
   return (
-    (item.mods.pwr || 0) < 0 ||
-    (item.mods.def || 0) < 0 ||
-    (item.mods.spd || 0) < 0 ||
-    effects.includes('self-damage') ||
-    effects.includes('healing received -') ||
-    effects.includes('outgoing damage -')
+    (config.pwrPenalty || 0) > 0 ||
+    (config.hpPenalty || 0) > 0 ||
+    (config.spdPenalty || 0) > 0 ||
+    (config.outgoingPenalty || 0) > 0 ||
+    (config.healPenalty || 0) > 0 ||
+    (config.selfDamage || 0) > 0 ||
+    (config.selfDot || 0) > 0
   );
 }
 
@@ -71,43 +87,52 @@ const failures = [];
 
 for (const cardClass of CARD_CLASSES) {
   const starter = getStarterLoadout(cardClass);
-  let starterScore = 0;
-  for (let seed = 1; seed <= 10000; seed += 1) {
-    starterScore += mirroredScore(
-      buildBaselineCard(cardClass, starter),
-      buildBaselineCard(cardClass, starter),
-      seed
-    );
-  }
-  const starterRate = starterScore / 10000;
-  if (starterRate > 0.55) {
-    failures.push(`${cardClass} starter mirror exceeds 55% win score (${starterRate.toFixed(3)})`);
-  }
-
-  const items = getEquipmentCatalogByClass(cardClass);
-  const missingTradeoff = items.filter((item) => !hasRealDrawback(item));
+  const tracks = getEquipmentCatalogByClass(cardClass);
+  const missingTradeoff = tracks.filter((track) => !hasRealDrawback(track));
   if (missingTradeoff.length) {
-    failures.push(`${cardClass} has items without a visible drawback: ${missingTradeoff.map((item) => item.id).join(', ')}`);
+    failures.push(`${cardClass} has tracks without a visible drawback: ${missingTradeoff.map((track) => track.trackId).join(', ')}`);
   }
 
-  const loadouts = loadoutsForClass(cardClass);
-  const sampleSize = 96;
-  const sampleOpponents = Array.from({ length: sampleSize }, (_, index) => loadouts[Math.floor((index * loadouts.length) / sampleSize)]);
-
-  for (let index = 0; index < loadouts.length; index += 1) {
-    const loadout = loadouts[index];
-    let score = 0;
-    for (let opponentIndex = 0; opponentIndex < sampleOpponents.length; opponentIndex += 1) {
-      score += mirroredScore(
-        buildBaselineCard(cardClass, loadout),
-        buildBaselineCard(cardClass, sampleOpponents[opponentIndex]),
-        (index + 1) * 1000 + opponentIndex
+  for (const level of TEST_LEVELS) {
+    const levelTrackLevels = buildTrackLevels(cardClass, level);
+    let starterScore = 0;
+    for (let seed = 1; seed <= STARTER_MIRROR_SEEDS; seed += 1) {
+      starterScore += mirroredScore(
+        buildBaselineCard(cardClass, starter, levelTrackLevels),
+        buildBaselineCard(cardClass, starter, levelTrackLevels),
+        seed
       );
     }
-    const rate = score / sampleOpponents.length;
-    if (rate > 0.55) {
-      failures.push(`${cardClass} loadout ${loadout.powerItemId} / ${loadout.defenseItemId} / ${loadout.speedItemId} exceeds 55% sampled field rate (${rate.toFixed(3)})`);
-      break;
+    const starterRate = starterScore / STARTER_MIRROR_SEEDS;
+    if (starterRate > TARGET_WIN_RATE) {
+      failures.push(`${cardClass} level ${level} starter mirror exceeds ${(TARGET_WIN_RATE * 100).toFixed(0)}% win score (${starterRate.toFixed(3)})`);
+    }
+
+    const loadouts = loadoutsForClass(cardClass);
+    const sampleOpponents = Array.from(
+      { length: FIELD_SAMPLE_SIZE },
+      (_, index) => loadouts[Math.floor((index * loadouts.length) / FIELD_SAMPLE_SIZE)]
+    );
+
+    for (let index = 0; index < loadouts.length; index += 1) {
+      const loadout = loadouts[index];
+      let score = 0;
+      for (let opponentIndex = 0; opponentIndex < sampleOpponents.length; opponentIndex += 1) {
+        const seed = ((level * 100000) + ((index + 1) * 100) + opponentIndex);
+        score += mirroredScore(
+          buildBaselineCard(cardClass, loadout, levelTrackLevels),
+          buildBaselineCard(cardClass, sampleOpponents[opponentIndex], levelTrackLevels),
+          seed
+        );
+      }
+
+      const rate = score / sampleOpponents.length;
+      if (rate > TARGET_WIN_RATE) {
+        failures.push(
+          `${cardClass} level ${level} loadout ${loadout.powerTrackId} / ${loadout.hpTrackId} / ${loadout.speedTrackId} exceeds ${(TARGET_WIN_RATE * 100).toFixed(0)}% sampled field rate (${rate.toFixed(3)})`
+        );
+        break;
+      }
     }
   }
 }

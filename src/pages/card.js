@@ -7,6 +7,7 @@ import { playCardReveal } from '../sound.js';
 import { signOwnership } from '../wallet.js';
 import { mapTraitsToCard, deriveStatsFromHash, ELEMENT_COLORS } from '../traits.js';
 import { syncCard } from '../api.js';
+import { deriveCombatStats } from '../game/equipment-system.js';
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
 
@@ -80,6 +81,7 @@ async function fetchNFTs(address) {
 export function buildCardHTML(card) {
   const tokenId = card.tokenId || card.token_id;
   const stats  = deriveStats(tokenId, card.attributes);
+  const combat = deriveCombatStats({ ...card, ...stats, tokenId });
   const level  = card.level  || 1;
   const xp     = card.xp     || 0;
   const xpNext = level * 100;
@@ -123,18 +125,18 @@ export function buildCardHTML(card) {
         <div class="zk-stats">
           <div class="zk-stat pwr">
             <span class="zk-stat-label">PWR</span>
-            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${stats.pwr}%"></div></div>
-            <span class="zk-stat-val">${stats.pwr}</span>
+            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${Math.min(100, combat.pwr)}%"></div></div>
+            <span class="zk-stat-val">${combat.pwr}</span>
           </div>
           <div class="zk-stat def">
-            <span class="zk-stat-label">DEF</span>
-            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${stats.def}%"></div></div>
-            <span class="zk-stat-val">${stats.def}</span>
+            <span class="zk-stat-label">HP</span>
+            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${Math.min(100, Math.round((combat.hp / 420) * 100))}%"></div></div>
+            <span class="zk-stat-val">${combat.hp}</span>
           </div>
           <div class="zk-stat spd">
             <span class="zk-stat-label">SPD</span>
-            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${stats.spd}%"></div></div>
-            <span class="zk-stat-val">${stats.spd}</span>
+            <div class="zk-stat-bar"><div class="zk-stat-fill" style="width:${Math.min(100, combat.spd)}%"></div></div>
+            <span class="zk-stat-val">${combat.spd}</span>
           </div>
         </div>
         <div class="zk-level-row">

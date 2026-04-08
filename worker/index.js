@@ -1,3 +1,17 @@
+import {
+  CARD_CLASSES,
+  buildEquipmentCardView,
+  buildLoadoutView,
+  calcXP as calcEquipmentXp,
+  getEquipmentById,
+  getEquipmentCatalogByClass,
+  getForgeShardReward,
+  getFreeTrackLevels,
+  getStarterLoadout,
+  normalizeCardClass,
+  resolveBattle as resolveEquipmentBattle,
+} from '../src/game/equipment-system.js';
+
 // ══════════════════════════════════════════════
 // ZENKAI — Cloudflare Worker API
 // DB: D1 (SQLite)  |  No Express, no Neon
@@ -265,6 +279,7 @@ function buildCardStats(cardRow, fallbackCard) {
     return {
       pwr:     cardRow.pwr,
       def:     cardRow.def,
+      hp:      cardRow.hp,
       spd:     cardRow.spd,
       element: cardRow.element,
       ability: cardRow.ability,
@@ -277,6 +292,7 @@ function buildCardStats(cardRow, fallbackCard) {
     return {
       pwr:     fallbackCard.pwr,
       def:     fallbackCard.def,
+      hp:      fallbackCard.hp,
       spd:     fallbackCard.spd,
       element: fallbackCard.element,
       ability: fallbackCard.ability,
@@ -309,7 +325,8 @@ function parseDbDate(value) {
 function getCardPowerScore(cardRow, fallbackCard) {
   const stats  = buildCardStats(cardRow, fallbackCard);
   const level  = Math.max(1, Number(stats.level) || 1);
-  const avg    = ((Number(stats.pwr) || 50) + (Number(stats.def) || 50) + (Number(stats.spd) || 50)) / 3;
+  const hpSeed = Number(stats.hp ?? (180 + ((Number(stats.def) || 50) * 3) + (level * 10)));
+  const avg    = ((Number(stats.pwr) || 50) + (hpSeed / 8) + (Number(stats.spd) || 50)) / 3;
   const rarity = normalizeRarity(stats.rarity || fallbackCard?.rarity || cardRow?.rarity);
   return Math.round(level * 120 + avg * 6 + (RARITY_RATING_BONUS[rarity] || 0));
 }
@@ -317,7 +334,8 @@ function getCardPowerScore(cardRow, fallbackCard) {
 function seedCompetitiveRating(cardRow, fallbackCard) {
   const stats  = buildCardStats(cardRow, fallbackCard);
   const level  = Math.max(1, Number(stats.level) || 1);
-  const avg    = ((Number(stats.pwr) || 50) + (Number(stats.def) || 50) + (Number(stats.spd) || 50)) / 3;
+  const hpSeed = Number(stats.hp ?? (180 + ((Number(stats.def) || 50) * 3) + (level * 10)));
+  const avg    = ((Number(stats.pwr) || 50) + (hpSeed / 8) + (Number(stats.spd) || 50)) / 3;
   const rarity = normalizeRarity(stats.rarity || fallbackCard?.rarity || cardRow?.rarity);
   return clamp(
     Math.round(DEFAULT_COMPETITIVE_RATING + (avg - 50) * 4 + (level - 1) * 18 + (RARITY_COMPETITIVE_SEED[rarity] || 0)),
@@ -470,9 +488,9 @@ function attachCompetitiveMeta(cardRow, fallbackCard = cardRow) {
   };
 }
 
-function attachCardLoadout(cardRow, loadout, fallbackClass = cardRow?.element) {
+function attachCardLoadout(cardRow, loadout, trackLevels, fallbackClass = cardRow?.element) {
   if (!cardRow) return null;
-  return buildEquipmentCardView(attachCompetitiveMeta(cardRow), loadout, fallbackClass);
+  return buildEquipmentCardView(attachCompetitiveMeta(cardRow), loadout, trackLevels, fallbackClass);
 }
 
 async function getPlayerProgress(env, address) {
@@ -487,16 +505,17 @@ async function getPlayerProgress(env, address) {
   ).bind(address).first();
 }
 
-async function getUnlockedEquipmentIdsForClass(env, address, cardClass) {
+async function getTrackLevelsForClass(env, address, cardClass) {
   const normalized = normalizeCardClass(cardClass);
   const rows = await env.DB.prepare(
-    'SELECT equipment_id FROM equipment_unlocks WHERE address = ? AND class_key = ? ORDER BY equipment_id ASC'
+    'SELECT track_id, current_level FROM equipment_track_levels WHERE address = ? AND class_key = ? ORDER BY track_id ASC'
   ).bind(address, normalized).all();
 
-  return Array.from(new Set([
-    ...getStarterUnlockedIds(normalized),
-    ...(rows.results || []).map((row) => row.equipment_id),
-  ]));
+  const levels = getFreeTrackLevels(normalized);
+  for (const row of rows.results || []) {
+    levels[row.track_id] = Math.max(1, Math.min(10, Number(row.current_level) || 1));
+  }
+  return levels;
 }
 
 async function hasActiveQueueLock(env, address) {
@@ -512,24 +531,33 @@ async function getCardLoadoutRecord(env, address, tokenId, cardClass) {
     'SELECT * FROM card_loadouts WHERE address = ? AND token_id = ?'
   ).bind(address, String(tokenId)).first();
 
-  if (existing) return buildLoadoutView(existing, normalizedClass);
+  const trackLevels = await getTrackLevelsForClass(env, address, normalizedClass);
+
+  if (existing) {
+    const normalized = {
+      powerTrackId: existing.power_track_id || existing.power_item_id || getStarterLoadout(normalizedClass).powerTrackId,
+      hpTrackId: existing.hp_track_id || (existing.defense_item_id ? String(existing.defense_item_id).replace('_defense_', '_hp_') : getStarterLoadout(normalizedClass).hpTrackId),
+      speedTrackId: existing.speed_track_id || existing.speed_item_id || getStarterLoadout(normalizedClass).speedTrackId,
+    };
+    return buildLoadoutView(normalized, normalizedClass, trackLevels);
+  }
 
   const starter = getStarterLoadout(normalizedClass);
   await env.DB.prepare(
-    `INSERT INTO card_loadouts (address, token_id, power_item_id, defense_item_id, speed_item_id, updated_at)
+    `INSERT INTO card_loadouts (address, token_id, power_track_id, hp_track_id, speed_track_id, updated_at)
      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(address, token_id) DO NOTHING`
-  ).bind(address, String(tokenId), starter.powerItemId, starter.defenseItemId, starter.speedItemId).run();
+  ).bind(address, String(tokenId), starter.powerTrackId, starter.hpTrackId, starter.speedTrackId).run();
 
-  return buildLoadoutView(starter, normalizedClass);
+  return buildLoadoutView(starter, normalizedClass, trackLevels);
 }
 
-function buildEquipmentProgressPayload(address, cardClass, progressRow, unlockedIds) {
+function buildEquipmentProgressPayload(address, cardClass, progressRow, trackLevels) {
   return {
     address,
     classKey: normalizeCardClass(cardClass),
     forgeShards: Number(progressRow?.forge_shards || 0),
-    unlockedEquipmentIds: unlockedIds,
+    trackLevels,
   };
 }
 
@@ -543,12 +571,7 @@ function buildResolvedBattlePayload(battle, address, myCard) {
 
   let rounds = safeJsonParse(battle.rounds, []);
   if (!isP1) {
-    rounds = rounds.map((round) => ({
-      ...round,
-      p1: round.p2,
-      p2: round.p1,
-      result: round.result === 'p1' ? 'p2' : round.result === 'p2' ? 'p1' : round.result,
-    }));
+    rounds = rounds.map((round) => swapBattlePerspective(round));
   }
 
   return {
@@ -560,10 +583,78 @@ function buildResolvedBattlePayload(battle, address, myCard) {
     won,
     opponent: {
       address: isP1 ? battle.player2 : battle.player1,
-      card:    buildEquipmentCardView(attachCompetitiveMeta(oppSnapshot), oppSnapshot.equipmentLoadout, oppSnapshot.element),
+      card: buildEquipmentCardView(
+        attachCompetitiveMeta(oppSnapshot),
+        oppSnapshot.equipmentLoadout,
+        oppSnapshot.equipmentLevels,
+        oppSnapshot.element
+      ),
     },
-    card: buildEquipmentCardView(attachCompetitiveMeta(myCard, mySnapshot), mySnapshot.equipmentLoadout, mySnapshot.element) || null,
+    card: buildEquipmentCardView(
+      attachCompetitiveMeta(myCard, mySnapshot),
+      mySnapshot.equipmentLoadout,
+      mySnapshot.equipmentLevels,
+      mySnapshot.element
+    ) || null,
   };
+}
+
+function swapSide(value) {
+  if (value === 'p1') return 'p2';
+  if (value === 'p2') return 'p1';
+  return value;
+}
+
+function cloneBattleSide(side) {
+  return side && typeof side === 'object'
+    ? {
+      ...side,
+      statuses: Array.isArray(side.statuses) ? [...side.statuses] : side.statuses,
+    }
+    : side;
+}
+
+function swapBattlePerspective(round) {
+  if (!round || typeof round !== 'object') return round;
+
+  const swapped = { ...round };
+
+  if ('p1' in swapped || 'p2' in swapped) {
+    swapped.p1 = round.p2;
+    swapped.p2 = round.p1;
+  }
+
+  if (round.start && typeof round.start === 'object') {
+    swapped.start = {
+      p1: Array.isArray(round.start.p2) ? [...round.start.p2] : round.start.p2,
+      p2: Array.isArray(round.start.p1) ? [...round.start.p1] : round.start.p1,
+    };
+  }
+
+  if (round.end && typeof round.end === 'object') {
+    swapped.end = {
+      p1: cloneBattleSide(round.end.p2),
+      p2: cloneBattleSide(round.end.p1),
+    };
+  }
+
+  if (Array.isArray(round.actions)) {
+    swapped.actions = round.actions.map((action) => ({
+      ...action,
+      actor: swapSide(action.actor),
+      target: swapSide(action.target),
+    }));
+  }
+
+  if ('leader' in swapped) {
+    swapped.leader = swapSide(round.leader);
+  }
+
+  if ('result' in swapped) {
+    swapped.result = swapSide(round.result);
+  }
+
+  return swapped;
 }
 
 async function findBattleByTicket(env, ticketId) {
@@ -590,6 +681,7 @@ async function ensureMatchmakingSchema(env) {
              image TEXT,
              pwr INTEGER,
              def INTEGER,
+             hp INTEGER,
              spd INTEGER,
              element TEXT,
              ability TEXT,
@@ -658,21 +750,22 @@ async function ensureMatchmakingSchema(env) {
            )`
         ),
         env.DB.prepare(
-          `CREATE TABLE IF NOT EXISTS equipment_unlocks (
+          `CREATE TABLE IF NOT EXISTS equipment_track_levels (
              address TEXT NOT NULL,
              class_key TEXT NOT NULL,
-             equipment_id TEXT NOT NULL,
-             unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-             PRIMARY KEY (address, equipment_id)
+             track_id TEXT NOT NULL,
+             current_level INTEGER DEFAULT 1,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (address, track_id)
            )`
         ),
         env.DB.prepare(
           `CREATE TABLE IF NOT EXISTS card_loadouts (
              address TEXT NOT NULL,
              token_id TEXT NOT NULL,
-             power_item_id TEXT NOT NULL,
-             defense_item_id TEXT NOT NULL,
-             speed_item_id TEXT NOT NULL,
+             power_track_id TEXT,
+             hp_track_id TEXT,
+             speed_track_id TEXT,
              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
              PRIMARY KEY (address, token_id)
            )`
@@ -729,6 +822,9 @@ async function ensureMatchmakingSchema(env) {
       if (!cardColumns.has('def')) {
         migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN def INTEGER'));
       }
+      if (!cardColumns.has('hp')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN hp INTEGER'));
+      }
       if (!cardColumns.has('spd')) {
         migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN spd INTEGER'));
       }
@@ -755,6 +851,32 @@ async function ensureMatchmakingSchema(env) {
       }
       if (!cardColumns.has('last_rated_at')) {
         migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN last_rated_at DATETIME'));
+      }
+      const [loadoutInfo, progressTrackInfo] = await env.DB.batch([
+        env.DB.prepare('PRAGMA table_info(card_loadouts)'),
+        env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'equipment_track_levels'"),
+      ]);
+      const loadoutColumns = new Set((loadoutInfo.results || []).map((row) => row.name));
+      if (!loadoutColumns.has('power_track_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE card_loadouts ADD COLUMN power_track_id TEXT'));
+      }
+      if (!loadoutColumns.has('hp_track_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE card_loadouts ADD COLUMN hp_track_id TEXT'));
+      }
+      if (!loadoutColumns.has('speed_track_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE card_loadouts ADD COLUMN speed_track_id TEXT'));
+      }
+      if (!progressTrackInfo.results?.length) {
+        migrations.push(env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS equipment_track_levels (
+             address TEXT NOT NULL,
+             class_key TEXT NOT NULL,
+             track_id TEXT NOT NULL,
+             current_level INTEGER DEFAULT 1,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (address, track_id)
+           )`
+        ));
       }
 
       if (migrations.length) {
@@ -786,6 +908,24 @@ async function ensureMatchmakingSchema(env) {
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battles_p2_ticket_id ON battles(p2_ticket_id)'),
         env.DB.prepare(
           `UPDATE game_cards
+              SET hp = COALESCE(hp, 180 + (COALESCE(def, 50) * 3) + (COALESCE(level, 1) * 10))
+            WHERE hp IS NULL`
+        ),
+        ...(loadoutColumns.has('power_item_id') || loadoutColumns.has('defense_item_id') || loadoutColumns.has('speed_item_id')
+          ? [
+            env.DB.prepare(
+              `UPDATE card_loadouts
+                  SET power_track_id = COALESCE(power_track_id, power_item_id),
+                      hp_track_id = COALESCE(hp_track_id, REPLACE(defense_item_id, '_defense_', '_hp_')),
+                      speed_track_id = COALESCE(speed_track_id, speed_item_id)
+                WHERE power_track_id IS NULL
+                   OR hp_track_id IS NULL
+                   OR speed_track_id IS NULL`
+            ),
+          ]
+          : []),
+        env.DB.prepare(
+          `UPDATE game_cards
               SET competitive_rating = COALESCE(competitive_rating, ${DEFAULT_COMPETITIVE_RATING}),
                   competitive_rd = COALESCE(competitive_rd, ${DEFAULT_COMPETITIVE_RD}),
                   competitive_volatility = COALESCE(competitive_volatility, ${DEFAULT_COMPETITIVE_VOLATILITY}),
@@ -796,7 +936,7 @@ async function ensureMatchmakingSchema(env) {
                OR competitive_matches IS NULL`
         ),
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_game_cards_competitive_rating ON game_cards(competitive_rating DESC, wins DESC)'),
-        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_equipment_unlocks_class_key ON equipment_unlocks(address, class_key)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_equipment_track_levels_class_key ON equipment_track_levels(address, class_key)'),
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_card_loadouts_address ON card_loadouts(address, token_id)'),
       ]);
     })().catch((err) => {
@@ -854,8 +994,13 @@ async function loadQueueBattlePayload(env, address, queueRow) {
   const myCard = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(address).first();
+  const progress = await getPlayerProgress(env, address);
 
-  return buildResolvedBattlePayload(battle, address, myCard);
+  return buildResolvedBattlePayload(
+    battle,
+    address,
+    myCard ? { ...myCard, forge_shards: Number(progress?.forge_shards || 0) } : myCard
+  );
 }
 
 async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId) {
@@ -982,6 +1127,7 @@ async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId
       ? { ...p1Row, ...p1Progress, ...p1Competitive, forge_shards: Number(p1ProgressRow?.forge_shards || 0) + p1Forge }
       : { ...selfCard, ...p1Stats, ...p1Progress, ...p1Competitive, forge_shards: Number(p1ProgressRow?.forge_shards || 0) + p1Forge },
     selfCard.equipmentLoadout,
+    selfCard.equipmentLevels,
     selfCard.element
   );
   const oppPayload = attachCardLoadout(
@@ -989,6 +1135,7 @@ async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId
       ? { ...p2Row, ...p2Progress, ...p2Competitive, forge_shards: Number(p2ProgressRow?.forge_shards || 0) + p2Forge }
       : { ...oppCard, ...p2Stats, ...p2Progress, ...p2Competitive, forge_shards: Number(p2ProgressRow?.forge_shards || 0) + p2Forge },
     oppCard.equipmentLoadout,
+    oppCard.equipmentLevels,
     oppCard.element
   );
 
@@ -1211,7 +1358,8 @@ export default {
         ).bind(address).first();
         if (!row) return json({ error: 'not_found' }, 404);
         const loadout = await getCardLoadoutRecord(env, address, row.token_id, row.element);
-        return json({ card: attachCardLoadout(row, loadout, row.element) });
+        const trackLevels = await getTrackLevelsForClass(env, address, row.element);
+        return json({ card: attachCardLoadout(row, loadout, trackLevels, row.element) });
       }
 
       // ── Game: Enter queue ─────────────────────────────────────────────────
@@ -1223,8 +1371,11 @@ export default {
         const address = path.split('/').pop().toLowerCase();
         return handleEquipmentProgress(address, env);
       }
+      if (method === 'POST' && path === '/api/game/equipment/purchase') {
+        return handleEquipmentPurchase(request, env);
+      }
       if (method === 'POST' && path === '/api/game/equipment/unlock') {
-        return handleEquipmentUnlock(request, env);
+        return handleEquipmentPurchase(request, env);
       }
       if (method === 'POST' && path === '/api/game/equipment/loadout') {
         return handleEquipmentLoadoutUpdate(request, env);
@@ -1253,9 +1404,9 @@ export default {
       // ── Game: Leaderboard ─────────────────────────────────────────────────
       if (method === 'GET' && path === '/api/game/leaderboard') {
         const rows = await env.DB.prepare(
-          `SELECT address, level, xp, wins, losses, competitive_rating, competitive_matches
+          `SELECT address, level, xp, wins, losses, hp, competitive_rating, competitive_matches
              FROM game_cards
-            ORDER BY competitive_rating DESC, wins DESC, level DESC
+            ORDER BY wins DESC, losses ASC, level DESC, address ASC
             LIMIT 50`
         ).all();
         return json({
@@ -1275,16 +1426,17 @@ export default {
           'SELECT * FROM profiles WHERE address = ?'
         ).bind(address).first();
         const card = await env.DB.prepare(
-          `SELECT token_id, level, xp, wins, losses, name, image, element, rarity,
+          `SELECT token_id, level, xp, wins, losses, hp, name, image, element, rarity,
                   competitive_rating, competitive_rd, competitive_volatility, competitive_matches, last_rated_at
              FROM game_cards
             WHERE address = ?`
         ).bind(address).first();
         const progress = await getPlayerProgress(env, address);
         const loadout = card ? await getCardLoadoutRecord(env, address, card.token_id || card.tokenId || '', card.element) : null;
+        const trackLevels = card ? await getTrackLevelsForClass(env, address, card.element) : null;
         return json({
           profile: profile || null,
-          card: card ? attachCardLoadout(card, loadout, card.element) : null,
+          card: card ? attachCardLoadout(card, loadout, trackLevels, card.element) : null,
           forgeShards: Number(progress?.forge_shards || 0),
         });
       }
@@ -1361,7 +1513,7 @@ async function handleGameRegister(request, env) {
   await ensureMatchmakingSchema(env);
 
   const body = await request.json();
-  const { address, tokenId, name, image, pwr, def, spd, element, ability, rarity, attributes } = body;
+  const { address, tokenId, name, image, pwr, def, hp, spd, element, ability, rarity, attributes } = body;
 
   if (!address || !isValidEthAddress(address)) {
     return json({ error: 'invalid', message: 'Invalid Ethereum address' }, 400);
@@ -1376,13 +1528,14 @@ async function handleGameRegister(request, env) {
   const existing = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(addr).first();
-  const seedCard = { tokenId: tid, pwr, def, spd, element, ability, rarity, level: existing?.level || 1 };
+  const seedHp = hp ?? (180 + ((Number(def) || 50) * 3) + (((existing?.level || 1)) * 10));
+  const seedCard = { tokenId: tid, pwr, def, hp: seedHp, spd, element, ability, rarity, level: existing?.level || 1 };
   const seededState = getCompetitiveState(existing, seedCard);
 
   if (existing) {
     await env.DB.prepare(
       `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
-       pwr = ?, def = ?, spd = ?, element = ?, ability = ?, rarity = ?, traits_json = ?,
+       pwr = ?, def = ?, hp = ?, spd = ?, element = ?, ability = ?, rarity = ?, traits_json = ?,
        competitive_rating = COALESCE(competitive_rating, ?),
        competitive_rd = COALESCE(competitive_rd, ?),
        competitive_volatility = COALESCE(competitive_volatility, ?),
@@ -1394,6 +1547,7 @@ async function handleGameRegister(request, env) {
       cleanImage,
       pwr ?? null,
       def ?? null,
+      seedHp,
       spd ?? null,
       element ?? null,
       ability ?? null,
@@ -1407,9 +1561,9 @@ async function handleGameRegister(request, env) {
   } else {
     await env.DB.prepare(
       `INSERT INTO game_cards (
-         address, token_id, name, image, pwr, def, spd, element, ability, rarity, traits_json,
+         address, token_id, name, image, pwr, def, hp, spd, element, ability, rarity, traits_json,
          competitive_rating, competitive_rd, competitive_volatility, competitive_matches
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       addr,
       tid,
@@ -1417,6 +1571,7 @@ async function handleGameRegister(request, env) {
       cleanImage,
       pwr ?? null,
       def ?? null,
+      seedHp,
       spd ?? null,
       element ?? null,
       ability ?? null,
@@ -1431,11 +1586,12 @@ async function handleGameRegister(request, env) {
 
   const card = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
   const progress = await getPlayerProgress(env, addr);
+  const trackLevels = await getTrackLevelsForClass(env, addr, card?.element || seedCard.element);
   const loadout = await getCardLoadoutRecord(env, addr, tid, card?.element || seedCard.element);
   return json({
     success: true,
     card: {
-      ...attachCardLoadout(card, loadout, card?.element || seedCard.element),
+      ...attachCardLoadout(card, loadout, trackLevels, card?.element || seedCard.element),
       forge_shards: Number(progress?.forge_shards || 0),
     },
   });
@@ -1446,7 +1602,7 @@ function handleEquipmentCatalog(cardClass) {
   return json({
     classKey: normalized,
     starterLoadout: getStarterLoadout(normalized),
-    items: getEquipmentCatalogByClass(normalized),
+    tracks: getEquipmentCatalogByClass(normalized),
   });
 }
 
@@ -1457,32 +1613,21 @@ async function handleEquipmentProgress(address, env) {
 
   const addr = address.toLowerCase();
   const progress = await getPlayerProgress(env, addr);
-  const unlockedRows = await env.DB.prepare(
-    'SELECT class_key, equipment_id FROM equipment_unlocks WHERE address = ? ORDER BY class_key, equipment_id'
-  ).bind(addr).all();
-
-  const unlockedByClass = Object.fromEntries(
-    CARD_CLASSES.map((cardClass) => [cardClass, [...getStarterUnlockedIds(cardClass)]])
+  const trackLevelsByClass = Object.fromEntries(
+    await Promise.all(CARD_CLASSES.map(async (cardClass) => [cardClass, await getTrackLevelsForClass(env, addr, cardClass)]))
   );
-
-  for (const row of unlockedRows.results || []) {
-    const classKey = normalizeCardClass(row.class_key);
-    if (!unlockedByClass[classKey].includes(row.equipment_id)) {
-      unlockedByClass[classKey].push(row.equipment_id);
-    }
-  }
 
   return json({
     progress: {
       address: addr,
       forgeShards: Number(progress?.forge_shards || 0),
-      unlockedByClass,
+      trackLevelsByClass,
     },
   });
 }
 
-async function handleEquipmentUnlock(request, env) {
-  const { address, classKey, equipmentId } = await request.json();
+async function handleEquipmentPurchase(request, env) {
+  const { address, classKey, trackId } = await request.json();
 
   if (!address || !isValidEthAddress(address)) {
     return json({ error: 'invalid', message: 'Invalid address' }, 400);
@@ -1493,10 +1638,10 @@ async function handleEquipmentUnlock(request, env) {
     return json({ error: 'locked', message: 'Cannot change equipment while matchmaking is active' }, 409);
   }
 
-  const item = getEquipmentById(equipmentId);
+  const track = getEquipmentById(trackId);
   const normalizedClass = normalizeCardClass(classKey);
-  if (!item || item.classKey !== normalizedClass) {
-    return json({ error: 'invalid', message: 'Equipment does not match the requested class' }, 400);
+  if (!track || track.classKey !== normalizedClass) {
+    return json({ error: 'invalid', message: 'Track does not match the requested class' }, 400);
   }
 
   const cardRow = await env.DB.prepare(
@@ -1506,50 +1651,41 @@ async function handleEquipmentUnlock(request, env) {
     return json({ error: 'invalid', message: 'Current card class does not match this equipment class' }, 400);
   }
 
-  if (item.starter) {
-    const progress = await getPlayerProgress(env, addr);
-    const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
-    return json({
-      success: true,
-      equipmentId: item.id,
-      progress: buildEquipmentProgressPayload(addr, normalizedClass, progress, unlockedIds),
-    });
-  }
-
   const progress = await getPlayerProgress(env, addr);
-  const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
-  if (unlockedIds.includes(item.id)) {
-    return json({
-      success: true,
-      equipmentId: item.id,
-      progress: buildEquipmentProgressPayload(addr, normalizedClass, progress, unlockedIds),
-    });
+  const trackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
+  const currentLevel = trackLevels[track.trackId] || 1;
+  if (currentLevel >= 10) {
+    return json({ error: 'max_level', message: 'Track is already max level' }, 400);
   }
 
-  if (Number(progress?.forge_shards || 0) < item.cost) {
+  const nextLevel = track.levels[currentLevel];
+  if (Number(progress?.forge_shards || 0) < nextLevel.price) {
     return json({ error: 'insufficient_forge_shards', message: 'Not enough Forge Shards' }, 400);
   }
 
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO equipment_unlocks (address, class_key, equipment_id)
-       VALUES (?, ?, ?)
-       ON CONFLICT(address, equipment_id) DO NOTHING`
-    ).bind(addr, normalizedClass, item.id),
+      `INSERT INTO equipment_track_levels (address, class_key, track_id, current_level, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(address, track_id) DO UPDATE SET
+         current_level = excluded.current_level,
+         updated_at = CURRENT_TIMESTAMP`
+    ).bind(addr, normalizedClass, track.trackId, currentLevel + 1),
     env.DB.prepare(
       `UPDATE player_progress
           SET forge_shards = forge_shards - ?,
               updated_at = CURRENT_TIMESTAMP
         WHERE address = ?`
-    ).bind(item.cost, addr),
+    ).bind(nextLevel.price, addr),
   ]);
 
   const updatedProgress = await getPlayerProgress(env, addr);
-  const updatedUnlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
+  const updatedTrackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
   return json({
     success: true,
-    equipmentId: item.id,
-    progress: buildEquipmentProgressPayload(addr, normalizedClass, updatedProgress, updatedUnlockedIds),
+    trackId: track.trackId,
+    purchasedLevel: currentLevel + 1,
+    progress: buildEquipmentProgressPayload(addr, normalizedClass, updatedProgress, updatedTrackLevels),
   });
 }
 
@@ -1566,15 +1702,16 @@ async function handleEquipmentLoadoutGet(address, tokenId, env) {
 
   await getPlayerProgress(env, addr);
   const loadout = await getCardLoadoutRecord(env, addr, tokenId, cardRow.element);
+  const trackLevels = await getTrackLevelsForClass(env, addr, cardRow.element);
   return json({
     loadout,
-    card: attachCardLoadout(cardRow, loadout, cardRow.element),
+    card: buildEquipmentCardView(attachCompetitiveMeta(cardRow), loadout, trackLevels, cardRow.element),
   });
 }
 
 async function handleEquipmentLoadoutUpdate(request, env) {
   const body = await request.json();
-  const { address, tokenId, powerItemId, defenseItemId, speedItemId } = body;
+  const { address, tokenId, powerTrackId, hpTrackId, speedTrackId } = body;
 
   if (!address || !isValidEthAddress(address)) {
     return json({ error: 'invalid', message: 'Invalid address' }, 400);
@@ -1591,33 +1728,24 @@ async function handleEquipmentLoadoutUpdate(request, env) {
   if (!cardRow) return json({ error: 'not_found' }, 404);
 
   const cardClass = normalizeCardClass(cardRow.element);
-  const requested = { powerItemId, defenseItemId, speedItemId };
-  const loadout = buildLoadoutView(requested, cardClass);
-  const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, cardClass);
-
-  for (const item of loadout.items) {
-    if (!item || item.classKey !== cardClass) {
-      return json({ error: 'invalid', message: 'Loadout contains invalid equipment' }, 400);
-    }
-    if (!item.starter && !unlockedIds.includes(item.id)) {
-      return json({ error: 'locked', message: `Equipment ${item.name} is not unlocked` }, 400);
-    }
-  }
+  const trackLevels = await getTrackLevelsForClass(env, addr, cardClass);
+  const requested = { powerTrackId, hpTrackId, speedTrackId };
+  const loadout = buildLoadoutView(requested, cardClass, trackLevels);
 
   await env.DB.prepare(
-    `INSERT INTO card_loadouts (address, token_id, power_item_id, defense_item_id, speed_item_id, updated_at)
+    `INSERT INTO card_loadouts (address, token_id, power_track_id, hp_track_id, speed_track_id, updated_at)
      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(address, token_id) DO UPDATE SET
-       power_item_id = excluded.power_item_id,
-       defense_item_id = excluded.defense_item_id,
-       speed_item_id = excluded.speed_item_id,
+       power_track_id = excluded.power_track_id,
+       hp_track_id = excluded.hp_track_id,
+       speed_track_id = excluded.speed_track_id,
        updated_at = CURRENT_TIMESTAMP`
-  ).bind(addr, String(tokenId), loadout.powerItemId, loadout.defenseItemId, loadout.speedItemId).run();
+  ).bind(addr, String(tokenId), loadout.powerTrackId, loadout.hpTrackId, loadout.speedTrackId).run();
 
   return json({
     success: true,
     loadout,
-    card: attachCardLoadout(cardRow, loadout, cardRow.element),
+    card: buildEquipmentCardView(attachCompetitiveMeta(cardRow), loadout, trackLevels, cardRow.element),
   });
 }
 
@@ -1787,8 +1915,9 @@ async function handleQueue(request, env) {
   const addr     = address.toLowerCase();
   const ticketId = crypto.randomUUID();
   const cardRow  = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
+  const trackLevels = await getTrackLevelsForClass(env, addr, cardRow?.element || card.element);
   const loadout  = await getCardLoadoutRecord(env, addr, card.tokenId, cardRow?.element || card.element);
-  const queuedCard = attachCardLoadout({ ...cardRow, ...card }, loadout, cardRow?.element || card.element);
+  const queuedCard = attachCardLoadout({ ...cardRow, ...card }, loadout, trackLevels, cardRow?.element || card.element);
   const cardJson = JSON.stringify(queuedCard);
   const profile  = computeMatchProfile(cardRow, queuedCard);
 
@@ -1865,8 +1994,13 @@ async function handleQueueStatus(address, ticketId, env) {
     const myCard = await env.DB.prepare(
       'SELECT * FROM game_cards WHERE address = ?'
     ).bind(addr).first();
+    const progress = await getPlayerProgress(env, addr);
 
-    return json(buildResolvedBattlePayload(battle, addr, myCard));
+    return json(buildResolvedBattlePayload(
+      battle,
+      addr,
+      myCard ? { ...myCard, forge_shards: Number(progress?.forge_shards || 0) } : myCard
+    ));
   }
 
   return json({ status: ticketId ? 'superseded' : 'idle', ticketId: ticketId || null });
@@ -1891,8 +2025,13 @@ async function handleQueueCancel(request, env) {
       const myCard = await env.DB.prepare(
         'SELECT * FROM game_cards WHERE address = ?'
       ).bind(addr).first();
+      const progress = await getPlayerProgress(env, addr);
 
-      return json(buildResolvedBattlePayload(battle, addr, myCard));
+      return json(buildResolvedBattlePayload(
+        battle,
+        addr,
+        myCard ? { ...myCard, forge_shards: Number(progress?.forge_shards || 0) } : myCard
+      ));
     }
 
     return json({ status: ticketId ? 'superseded' : 'idle', ticketId: ticketId || null });
@@ -1955,17 +2094,3 @@ async function handleProfileUpsert(request, env) {
   ).bind(addr).first();
   return json({ success: true, profile });
 }
-import {
-  CARD_CLASSES,
-  buildEquipmentCardView,
-  buildLoadoutView,
-  calcXP as calcEquipmentXp,
-  getEquipmentById,
-  getEquipmentCatalogByClass,
-  getForgeShardReward,
-  getStarterLoadout,
-  getStarterUnlockedIds,
-  isStarterEquipment,
-  normalizeCardClass,
-  resolveBattle as resolveEquipmentBattle,
-} from '../src/game/equipment-system.js';

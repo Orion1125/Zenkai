@@ -94,7 +94,7 @@ export function renderHome(app) {
           <button class="home-nav-btn" data-route="/equipment">
             <div class="home-nav-icon">🃏</div>
             <span class="home-nav-label">INVENTORY</span>
-            <span class="home-nav-desc">Build your loadout</span>
+            <span class="home-nav-desc">Loadout & shop</span>
           </button>
           <button class="home-nav-btn" data-route="/leaderboard">
             <div class="home-nav-icon">🏆</div>

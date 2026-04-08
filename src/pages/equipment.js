@@ -1,13 +1,13 @@
 import { navigate } from '../router.js';
-import { deriveStats, buildCardHTML } from './card.js';
+import { buildCardHTML, deriveStats } from './card.js';
 import {
   getEquipmentCatalog,
   getEquipmentLoadout,
   getEquipmentProgress,
-  unlockEquipment,
+  purchaseEquipmentLevel,
   updateEquipmentLoadout,
 } from '../api.js';
-import { buildEquipmentCardView, getLoadoutStatDelta } from '../game/equipment-system.js';
+import { buildEquipmentCardView, getLoadoutStatDelta, normalizeCardClass } from '../game/equipment-system.js';
 
 const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -19,45 +19,45 @@ export async function renderEquipment(app) {
   try { card = JSON.parse(localStorage.getItem('zenkai_card') || 'null'); } catch {}
   if (!card) { navigate('/card'); return; }
 
-  const derived = deriveStats(card.tokenId, card.attributes);
-  const cardClass = derived.element;
+  const classKey = normalizeCardClass(card.element || deriveStats(card.tokenId || card.token_id, card.attributes).element);
   const wrap = document.createElement('div');
   wrap.className = 'equipment-wrap';
-  wrap.innerHTML = `
-    <div class="profile-header">
-      <div class="brand-logo profile-logo">ZENKAI</div>
-      <span class="profile-addr">${esc(address.slice(0, 6))}…${esc(address.slice(-4))}</span>
-    </div>
-    <div class="profile-loading">
-      <div class="profile-spinner"></div>
-      <p class="profile-loading-text">LOADING LOADOUT…</p>
-    </div>
-  `;
+  wrap.innerHTML = `<div class="profile-loading"><div class="profile-spinner"></div><p class="profile-loading-text">LOADING MARKET...</p></div>`;
   app.appendChild(wrap);
 
   const [catalogData, progressData, loadoutData] = await Promise.all([
-    getEquipmentCatalog(cardClass),
+    getEquipmentCatalog(classKey),
     getEquipmentProgress(address),
-    getEquipmentLoadout(address, card.tokenId, cardClass),
+    getEquipmentLoadout(address, card.tokenId || card.token_id, classKey),
   ]);
 
-  const items = catalogData.items || [];
-  const progress = progressData.progress || { forgeShards: 0, unlockedByClass: {} };
+  const tracks = catalogData.tracks || catalogData.items || [];
+  const trackLevels = progressData.progress?.trackLevelsByClass?.[classKey] || {};
+  const forgeShards = progressData.progress?.forgeShards || 0;
   const loadout = loadoutData.loadout || catalogData.starterLoadout || {};
-  const unlockedIds = new Set(progress.unlockedByClass?.[cardClass] || []);
-  const enrichedCard = buildEquipmentCardView({ ...card, ...derived }, loadout, cardClass);
+  const enrichedCard = buildEquipmentCardView(card, loadout, trackLevels, classKey);
   localStorage.setItem('zenkai_card', JSON.stringify(enrichedCard));
-  localStorage.setItem('zenkai_forge_shards', String(progress.forgeShards || 0));
+  localStorage.setItem('zenkai_forge_shards', String(forgeShards));
 
-  renderEquipmentContent(wrap, address, enrichedCard, cardClass, items, progress, loadout, unlockedIds);
+  renderEquipmentContent(wrap, {
+    address,
+    card: enrichedCard,
+    classKey,
+    tracks,
+    trackLevels,
+    forgeShards,
+    activeTab: 'loadout',
+  });
 }
 
-function renderEquipmentContent(wrap, address, card, cardClass, items, progress, loadout, unlockedIds) {
-  const delta = getLoadoutStatDelta(loadout, cardClass);
-  const bySlot = {
-    power: items.filter((item) => item.slot === 'power'),
-    defense: items.filter((item) => item.slot === 'defense'),
-    speed: items.filter((item) => item.slot === 'speed'),
+function renderEquipmentContent(wrap, state) {
+  const { address, card, classKey, tracks, trackLevels, forgeShards, activeTab } = state;
+  const loadout = card.equipmentLoadout;
+  const delta = getLoadoutStatDelta(loadout, classKey, trackLevels);
+  const groups = {
+    power: tracks.filter((track) => track.slot === 'power'),
+    hp: tracks.filter((track) => track.slot === 'hp'),
+    speed: tracks.filter((track) => track.slot === 'speed'),
   };
 
   wrap.innerHTML = `
@@ -71,55 +71,82 @@ function renderEquipmentContent(wrap, address, card, cardClass, items, progress,
       <div class="equipment-summary">
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">CLASS</span>
-          <span class="equipment-summary-value">${esc(cardClass)}</span>
+          <span class="equipment-summary-value">${esc(classKey)}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">FORGE SHARDS</span>
-          <span class="equipment-summary-value">${progress.forgeShards || 0}</span>
+          <span class="equipment-summary-value">${forgeShards}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">LOADOUT</span>
-          <span class="equipment-summary-value equipment-summary-list">${card.equipmentLoadout.summary.map(esc).join(' • ')}</span>
+          <span class="equipment-summary-value equipment-summary-list">${loadout.summary.map(esc).join(' • ')}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">DELTA</span>
-          <span class="equipment-summary-value">PWR ${delta.pwr >= 0 ? '+' : ''}${delta.pwr} • DEF ${delta.def >= 0 ? '+' : ''}${delta.def} • SPD ${delta.spd >= 0 ? '+' : ''}${delta.spd}</span>
+          <span class="equipment-summary-value">PWR ${delta.pwr >= 0 ? '+' : ''}${delta.pwr} • HP ${delta.hp >= 0 ? '+' : ''}${delta.hp} • SPD ${delta.spd >= 0 ? '+' : ''}${delta.spd}</span>
         </div>
       </div>
     </div>
 
+    <div class="equipment-tab-row">
+      <button class="btn-ghost equipment-tab${activeTab === 'loadout' ? ' active' : ''}" data-tab="loadout">LOADOUT</button>
+      <button class="btn-ghost equipment-tab${activeTab === 'shop' ? ' active' : ''}" data-tab="shop">SHOP</button>
+    </div>
+
     <div class="equipment-slot-block">
-      ${['power', 'defense', 'speed'].map((slot) => `
-        <section class="equipment-slot-panel">
-          <div class="divider">${slot.toUpperCase()} GEAR</div>
-          <div class="equipment-grid">
-            ${bySlot[slot].map((item) => {
-              const equipped = (
-                (slot === 'power' && loadout.powerItemId === item.id) ||
-                (slot === 'defense' && loadout.defenseItemId === item.id) ||
-                (slot === 'speed' && loadout.speedItemId === item.id)
-              );
-              const unlocked = item.starter || unlockedIds.has(item.id);
-              const actionLabel = equipped ? 'EQUIPPED' : unlocked ? 'EQUIP' : `UNLOCK ${item.cost}`;
-              const actionClass = equipped ? 'btn-ghost' : 'btn-gold';
-              return `
-                <article class="equipment-item${equipped ? ' equipped' : ''}">
-                  <div class="equipment-item-head">
-                    <span class="equipment-item-code">${esc(item.code)}</span>
-                    <span class="equipment-item-name">${esc(item.name)}</span>
-                  </div>
-                  <div class="equipment-item-effects">
-                    ${item.effects.map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
-                  </div>
-                  <button class="${actionClass} equipment-action" data-item-id="${esc(item.id)}" data-slot="${slot}" ${equipped ? 'disabled' : ''}>
-                    ${actionLabel}
-                  </button>
-                </article>
-              `;
-            }).join('')}
-          </div>
-        </section>
-      `).join('')}
+      ${activeTab === 'loadout'
+        ? ['power', 'hp', 'speed'].map((slot) => `
+          <section class="equipment-slot-panel">
+            <div class="divider">${slot.toUpperCase()} TRACKS</div>
+            <div class="equipment-grid">
+              ${groups[slot].map((track) => {
+                const current = trackLevels[track.trackId] || 1;
+                const equipped = (
+                  (slot === 'power' && loadout.powerTrackId === track.trackId) ||
+                  (slot === 'hp' && loadout.hpTrackId === track.trackId) ||
+                  (slot === 'speed' && loadout.speedTrackId === track.trackId)
+                );
+                return `
+                  <article class="equipment-item${equipped ? ' equipped' : ''}">
+                    <div class="equipment-item-head">
+                      <span class="equipment-item-code">${esc(track.code)}</span>
+                      <span class="equipment-item-name">${esc(track.familyName)} LV ${current}</span>
+                    </div>
+                    <div class="equipment-item-effects">
+                      ${(track.levels[current - 1].effects || []).map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
+                    </div>
+                    <button class="btn-gold equipment-action" data-mode="equip" data-slot="${slot}" data-track-id="${esc(track.trackId)}" ${equipped ? 'disabled' : ''}>${equipped ? 'EQUIPPED' : 'EQUIP'}</button>
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          </section>
+        `).join('')
+        : ['power', 'hp', 'speed'].map((slot) => `
+          <section class="equipment-slot-panel">
+            <div class="divider">${slot.toUpperCase()} SHOP</div>
+            <div class="equipment-grid">
+              ${groups[slot].map((track) => {
+                const current = trackLevels[track.trackId] || 1;
+                const next = track.levels[current] || null;
+                return `
+                  <article class="equipment-item">
+                    <div class="equipment-item-head">
+                      <span class="equipment-item-code">${esc(track.code)}</span>
+                      <span class="equipment-item-name">${esc(track.familyName)}</span>
+                    </div>
+                    <div class="equipment-item-effects">
+                      <span class="equipment-effect-line">Current LV ${current}</span>
+                      ${(track.levels[current - 1].effects || []).map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
+                      ${next ? `<span class="equipment-effect-line equipment-next-line">Next LV ${next.level}: ${esc(next.effects[0] || 'Upgrade')}</span>` : '<span class="equipment-effect-line equipment-next-line">MAX LEVEL</span>'}
+                    </div>
+                    <button class="btn-gold equipment-action" data-mode="buy" data-track-id="${esc(track.trackId)}" ${!next ? 'disabled' : ''}>${next ? `BUY LV ${next.level} • ${next.price}` : 'MAXED'}</button>
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          </section>
+        `).join('')}
     </div>
 
     <div class="profile-nav">
@@ -130,54 +157,63 @@ function renderEquipmentContent(wrap, address, card, cardClass, items, progress,
 
   wrap.querySelector('#btn-home-equip')?.addEventListener('click', () => navigate('/home'));
   wrap.querySelector('#btn-arena-equip')?.addEventListener('click', () => navigate('/arena'));
+  wrap.querySelectorAll('.equipment-tab').forEach((button) => {
+    button.addEventListener('click', () => renderEquipmentContent(wrap, { ...state, activeTab: button.dataset.tab }));
+  });
 
   wrap.querySelectorAll('.equipment-action').forEach((button) => {
     button.addEventListener('click', async () => {
-      const itemId = button.dataset.itemId;
+      const mode = button.dataset.mode;
+      const trackId = button.dataset.trackId;
       const slot = button.dataset.slot;
-      const item = items.find((entry) => entry.id === itemId);
-      if (!item) return;
-
       button.disabled = true;
-      const original = button.textContent;
-      button.textContent = item.starter || unlockedIds.has(item.id) ? 'EQUIPPING…' : 'UNLOCKING…';
 
-      let nextProgress = progress;
-      if (!item.starter && !unlockedIds.has(item.id)) {
-        const unlockResult = await unlockEquipment(address, cardClass, item.id);
-        if (!unlockResult.success) {
+      if (mode === 'buy') {
+        const purchase = await purchaseEquipmentLevel(address, classKey, trackId);
+        if (purchase.error) {
           button.disabled = false;
-          button.textContent = unlockResult.message || 'FAILED';
+          button.textContent = purchase.message || 'FAILED';
           return;
         }
-        nextProgress = unlockResult.progress || progress;
-      }
-
-      const nextLoadout = {
-        powerItemId: slot === 'power' ? item.id : loadout.powerItemId,
-        defenseItemId: slot === 'defense' ? item.id : loadout.defenseItemId,
-        speedItemId: slot === 'speed' ? item.id : loadout.speedItemId,
-      };
-      const loadoutResult = await updateEquipmentLoadout(address, card.tokenId, nextLoadout, cardClass);
-      if (!loadoutResult.success && loadoutResult.error) {
-        button.disabled = false;
-        button.textContent = loadoutResult.message || original;
+        const nextTrackLevels = purchase.progress.trackLevels || purchase.progress.trackLevelsByClass?.[classKey] || trackLevels;
+        renderEquipmentContent(wrap, {
+          ...state,
+          trackLevels: nextTrackLevels,
+          forgeShards: purchase.progress.forgeShards,
+          card: (() => {
+            const updatedCard = buildEquipmentCardView(
+              { ...card, forge_shards: purchase.progress.forgeShards },
+              loadout,
+              nextTrackLevels,
+              classKey
+            );
+            localStorage.setItem('zenkai_card', JSON.stringify(updatedCard));
+            localStorage.setItem('zenkai_forge_shards', String(purchase.progress.forgeShards));
+            return updatedCard;
+          })(),
+        });
         return;
       }
 
-      const updatedCard = buildEquipmentCardView(card, nextLoadout, cardClass);
+      const nextLoadout = {
+        powerTrackId: slot === 'power' ? trackId : loadout.powerTrackId,
+        hpTrackId: slot === 'hp' ? trackId : loadout.hpTrackId,
+        speedTrackId: slot === 'speed' ? trackId : loadout.speedTrackId,
+      };
+      const saved = await updateEquipmentLoadout(address, card.tokenId || card.token_id, nextLoadout, classKey);
+      if (saved.error) {
+        button.disabled = false;
+        button.textContent = saved.message || 'FAILED';
+        return;
+      }
+
+      const updatedCard = buildEquipmentCardView(card, saved.loadout || nextLoadout, trackLevels, classKey);
       localStorage.setItem('zenkai_card', JSON.stringify(updatedCard));
-      localStorage.setItem('zenkai_forge_shards', String(nextProgress.forgeShards || progress.forgeShards || 0));
-      renderEquipmentContent(
-        wrap,
-        address,
-        updatedCard,
-        cardClass,
-        items,
-        nextProgress,
-        loadoutResult.loadout || nextLoadout,
-        new Set(nextProgress.unlockedEquipmentIds || nextProgress.unlockedByClass?.[cardClass] || [...unlockedIds, item.id]),
-      );
+      renderEquipmentContent(wrap, {
+        ...state,
+        card: updatedCard,
+        activeTab: 'loadout',
+      });
     });
   });
 }

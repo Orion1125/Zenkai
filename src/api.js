@@ -3,8 +3,8 @@ import {
   getLocalEquipmentCatalog,
   getLocalEquipmentProgress,
   getLocalLoadout,
+  purchaseLocalTrackLevel,
   saveLocalLoadout,
-  unlockLocalEquipment,
 } from './game/local-equipment-state.js';
 
 const BASE = import.meta.env.VITE_API_URL || '';
@@ -24,25 +24,25 @@ export async function apiGet(path) {
 }
 
 export async function syncCard(address, card) {
-  if (!BASE) {
-    return attachLocalEquipmentToCard(address, card);
-  }
+  if (!BASE) return attachLocalEquipmentToCard(address, card);
+
+  const payload = {
+    address,
+    tokenId: card.tokenId || card.token_id,
+    name: card.name,
+    image: card.image,
+    pwr: card.pwr ?? null,
+    def: card.def ?? null,
+    spd: card.spd ?? null,
+    hp: card.hp ?? null,
+    element: card.element ?? null,
+    ability: card.ability ?? null,
+    rarity: card.rarity ?? null,
+    attributes: card.attributes ?? [],
+  };
 
   try {
-    const stats = card.pwr != null ? card : {};
-    const data = await apiPost('/api/game/register', {
-      address,
-      tokenId: card.tokenId,
-      name: card.name,
-      image: card.image,
-      pwr: stats.pwr ?? null,
-      def: stats.def ?? null,
-      spd: stats.spd ?? null,
-      element: stats.element ?? null,
-      ability: stats.ability ?? null,
-      rarity: stats.rarity ?? null,
-      attributes: card.attributes ?? [],
-    });
+    const data = await apiPost('/api/game/register', payload);
     return data.card || null;
   } catch {
     return null;
@@ -74,7 +74,6 @@ export async function getProfile(address) {
     const card = attachLocalEquipmentToCard(address, localCard);
     return { profile: null, card, forgeShards: progress.forgeShards };
   }
-
   return apiGet(`/api/profile/${address}`);
 }
 
@@ -82,9 +81,9 @@ export async function updateProfile(address, data) {
   return apiPost('/api/profile', { address, ...data });
 }
 
-export async function getEquipmentCatalog(cardClass) {
-  if (!BASE) return getLocalEquipmentCatalog(cardClass);
-  const qs = cardClass ? `?class=${encodeURIComponent(cardClass)}` : '';
+export async function getEquipmentCatalog(classKey) {
+  if (!BASE) return getLocalEquipmentCatalog(classKey);
+  const qs = classKey ? `?class=${encodeURIComponent(classKey)}` : '';
   return apiGet(`/api/game/equipment/catalog${qs}`);
 }
 
@@ -93,17 +92,17 @@ export async function getEquipmentProgress(address) {
   return apiGet(`/api/game/equipment/progress/${address}`);
 }
 
-export async function unlockEquipment(address, classKey, equipmentId) {
-  if (!BASE) return unlockLocalEquipment(address, classKey, equipmentId);
-  return apiPost('/api/game/equipment/unlock', { address, classKey, equipmentId });
+export async function purchaseEquipmentLevel(address, classKey, trackId) {
+  if (!BASE) return purchaseLocalTrackLevel(address, classKey, trackId);
+  return apiPost('/api/game/equipment/purchase', { address, classKey, trackId });
 }
 
-export async function getEquipmentLoadout(address, tokenId, cardClass) {
-  if (!BASE) return getLocalLoadout(address, tokenId, cardClass);
+export async function getEquipmentLoadout(address, tokenId, classKey) {
+  if (!BASE) return getLocalLoadout(address, tokenId, classKey);
   return apiGet(`/api/game/equipment/loadout/${address}/${encodeURIComponent(tokenId)}`);
 }
 
-export async function updateEquipmentLoadout(address, tokenId, loadout, cardClass) {
-  if (!BASE) return saveLocalLoadout(address, tokenId, cardClass, loadout);
+export async function updateEquipmentLoadout(address, tokenId, loadout, classKey) {
+  if (!BASE) return saveLocalLoadout(address, tokenId, classKey, loadout);
   return apiPost('/api/game/equipment/loadout', { address, tokenId, ...loadout });
 }

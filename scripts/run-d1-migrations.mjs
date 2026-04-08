@@ -66,6 +66,7 @@ if (applied.size === 0) {
   const queueColumns = new Set(queryJson('PRAGMA table_info(battle_queue)').map((row) => row.name));
   const battleColumns = new Set(queryJson('PRAGMA table_info(battles)').map((row) => row.name));
   const profileColumns = new Set(queryJson('PRAGMA table_info(profiles)').map((row) => row.name));
+  const loadoutColumns = new Set(queryJson('PRAGMA table_info(card_loadouts)').map((row) => row.name));
   const baseline = [];
 
   if (tables.has('wallets') && tables.has('game_cards') && tables.has('battle_queue') && tables.has('battles')) {
@@ -84,8 +85,19 @@ if (applied.size === 0) {
   ) {
     baseline.push('003_competitive_ratings.sql');
   }
-  if (tables.has('player_progress') && tables.has('equipment_unlocks') && tables.has('card_loadouts')) {
+  if (
+    tables.has('player_progress') &&
+    tables.has('card_loadouts') &&
+    (tables.has('equipment_unlocks') || tables.has('equipment_track_levels'))
+  ) {
     baseline.push('004_equipment_system.sql');
+  }
+  if (
+    tables.has('equipment_track_levels') &&
+    cardColumns.has('hp') &&
+    ['power_track_id', 'hp_track_id', 'speed_track_id'].every((column) => loadoutColumns.has(column))
+  ) {
+    baseline.push('005_equipment_market_hp_tracks.sql');
   }
 
   for (const migration of baseline) {
