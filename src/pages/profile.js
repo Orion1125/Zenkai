@@ -53,6 +53,11 @@ function renderProfileContent(wrap, address, data) {
   const xpPct       = Math.min(100, Math.round((xp / xpNext) * 100));
   const element     = card.element || '—';
   const rarity      = card.rarity  || 'Common';
+  const competitiveRating  = card.competitive_rating || 1500;
+  const competitiveTier    = card.competitive_tier || 'Gold';
+  const competitiveMatches = card.competitive_matches || 0;
+  const forgeShards        = data.forgeShards || card.forge_shards || 0;
+  const loadoutSummary     = (card.equipmentLoadout?.summary || []).join(' • ');
   const totalBattles = wins + losses;
   const winRate     = totalBattles > 0 ? Math.round((wins / totalBattles) * 100) : 0;
 
@@ -84,12 +89,12 @@ function renderProfileContent(wrap, address, data) {
           <span class="profile-stat-label">LOSSES</span>
         </div>
         <div class="profile-stat-box">
-          <span class="profile-stat-value">${winRate}%</span>
-          <span class="profile-stat-label">WIN RATE</span>
+          <span class="profile-stat-value">${competitiveRating}</span>
+          <span class="profile-stat-label">RATING</span>
         </div>
         <div class="profile-stat-box">
-          <span class="profile-stat-value">${totalBattles}</span>
-          <span class="profile-stat-label">BATTLES</span>
+          <span class="profile-stat-value">${forgeShards}</span>
+          <span class="profile-stat-label">SHARDS</span>
         </div>
       </div>
 
@@ -106,6 +111,9 @@ function renderProfileContent(wrap, address, data) {
       <div class="profile-meta-row">
         <span class="profile-meta-badge element">${esc(element)}</span>
         <span class="profile-meta-badge rarity">${esc(rarity)}</span>
+        <span class="profile-meta-badge">${esc(competitiveTier)}</span>
+        ${competitiveMatches < 10 ? `<span class="profile-meta-badge">PLACEMENTS ${competitiveMatches}/10</span>` : ''}
+        ${loadoutSummary ? `<span class="profile-meta-badge">${esc(loadoutSummary)}</span>` : ''}
       </div>
     </div>
 
@@ -127,11 +135,13 @@ function renderProfileContent(wrap, address, data) {
 
     <div class="profile-nav">
       <button class="btn-ghost" id="btn-card">VIEW CARD</button>
+      <button class="btn-ghost" id="btn-equipment">EQUIPMENT</button>
       <button class="btn-ghost" id="btn-arena">ENTER ARENA</button>
     </div>
   `;
 
   wrap.querySelector('#btn-card')?.addEventListener('click', () => navigate('/card'));
+  wrap.querySelector('#btn-equipment')?.addEventListener('click', () => navigate('/equipment'));
   wrap.querySelector('#btn-arena')?.addEventListener('click', () => navigate('/arena'));
 
   wrap.querySelector('#btn-save-profile')?.addEventListener('click', async () => {

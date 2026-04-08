@@ -419,7 +419,7 @@ export function deriveStatsFromHash(tokenId) {
  * @param {number} [seed] optional seed for deterministic variance (server)
  * @returns {{ rounds: Array, winner: string, p1Wins: number, p2Wins: number }}
  */
-export function resolveBattle(p1, p2, seed) {
+export function resolveBattleLegacy(p1, p2, seed) {
   const lvlBonus1 = Math.min(10, (p1.level || 1) - 1);
   const lvlBonus2 = Math.min(10, (p2.level || 1) - 1);
 
@@ -538,7 +538,7 @@ export function resolveBattle(p1, p2, seed) {
 
 const RARITY_RANK = { COMMON: 0, UNCOMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 };
 
-export function calcXP(myRarity, oppRarity, won, draw) {
+export function calcXPLegacy(myRarity, oppRarity, won, draw) {
   const myR  = RARITY_RANK[myRarity]  ?? 0;
   const oppR = RARITY_RANK[oppRarity] ?? 0;
 
@@ -556,6 +556,14 @@ export function calcXP(myRarity, oppRarity, won, draw) {
 
 // ── NPC opponents for local mode ────────────────────────────────────────────
 
+export function resolveBattle(p1, p2, seed) {
+  return resolveEquipmentBattle(p1, p2, seed);
+}
+
+export function calcXP(myRarity, oppRarity, won, draw) {
+  return calcEquipmentXP(myRarity, oppRarity, won, draw);
+}
+
 export const NPC_OPPONENTS = [
   { tokenId: '1337', name: 'SHADOW MONK',   image: '/77f70ec7-eb8e-44ed-9aee-af98932591af.jpg',  pwr: 48, def: 55, spd: 52, element: 'SHADOW', ability: 'RESOLVE',        abilityDesc: '+10 in round 3 if losing', rarity: 'COMMON',   rarityColor: '#888888', elementColor: '#9c27b0' },
   { tokenId: '2048', name: 'IRON RONIN',    image: '/9c0a9206-d63d-4d34-bc9b-4188eb44dee3.jpg',  pwr: 60, def: 58, spd: 55, element: 'EARTH',  ability: null,             abilityDesc: null, rarity: 'UNCOMMON', rarityColor: '#00c0ff', elementColor: '#8d6e34' },
@@ -568,3 +576,4 @@ export const NPC_OPPONENTS = [
 // ── Lookup tables export (for worker to copy) ───────────────────────────────
 
 export { ELEMENT_ADVANTAGE, ABILITY_MAP, WEIGHT_TABLES };
+import { resolveBattle as resolveEquipmentBattle, calcXP as calcEquipmentXP } from './game/equipment-system.js';

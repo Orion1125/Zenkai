@@ -111,7 +111,7 @@ function battleSeed(p1id, p2id) {
 
 // ── Full trait-based battle resolution (mirrors frontend traits.js) ──────────
 
-function resolveBattle(p1, p2, seed) {
+function resolveBattleLegacy(p1, p2, seed) {
   const rng = seededRng(seed || battleSeed(String(p1.pwr), String(p2.pwr)));
 
   const lvlBonus1 = (p1.level || 1) * 1.2;
@@ -191,7 +191,7 @@ function resolveBattle(p1, p2, seed) {
 
 // ── XP calculation (mirrors frontend) ────────────────────────────────────────
 
-function calcXP(myRarity, oppRarity, won, draw) {
+function calcXPLegacy(myRarity, oppRarity, won, draw) {
   const RARITY_VAL = { COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5 };
   const mine = RARITY_VAL[myRarity] || 1;
   const opp  = RARITY_VAL[oppRarity] || 1;
@@ -199,6 +199,945 @@ function calcXP(myRarity, oppRarity, won, draw) {
   if (won)  return Math.max(5, 50 + diff * 5);
   if (draw) return 15;
   return Math.max(5, 10 + diff * 3);
+}
+
+function resolveBattle(p1, p2, seed) {
+  return resolveEquipmentBattle(p1, p2, seed);
+}
+
+function calcXP(myRarity, oppRarity, won, draw) {
+  return calcEquipmentXp(myRarity, oppRarity, won, draw);
+}
+
+const QUEUE_TICKET_TTL_SECONDS = 90;
+const MATCH_ASSEMBLY_TTL_SECONDS = 15;
+const MATCHED_TICKET_TTL_SECONDS = 180;
+const DEFAULT_COMPETITIVE_RATING = 1500;
+const DEFAULT_COMPETITIVE_RD = 350;
+const DEFAULT_COMPETITIVE_VOLATILITY = 0.06;
+const COMPETITIVE_TAU = 0.5;
+const GLICKO2_SCALE = 173.7178;
+const POWER_BUCKET_SIZE = 75;
+const RARITY_RATING_BONUS = {
+  COMMON: 0,
+  UNCOMMON: 25,
+  RARE: 55,
+  EPIC: 95,
+  LEGENDARY: 140,
+};
+const RARITY_COMPETITIVE_SEED = {
+  COMMON: -40,
+  UNCOMMON: -15,
+  RARE: 20,
+  EPIC: 60,
+  LEGENDARY: 110,
+};
+
+let _matchmakingSchemaPromise = null;
+
+function safeJsonParse(value, fallback = null) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function applyBattleProgress(cardRow, xpEarned, outcome) {
+  let level  = Math.max(1, Number(cardRow?.level) || 1);
+  let xp     = Math.max(0, Number(cardRow?.xp) || 0) + xpEarned;
+  let wins   = Math.max(0, Number(cardRow?.wins) || 0);
+  let losses = Math.max(0, Number(cardRow?.losses) || 0);
+
+  if (outcome === 'win') wins += 1;
+  if (outcome === 'loss') losses += 1;
+
+  while (xp >= level * 100) {
+    xp -= level * 100;
+    level += 1;
+  }
+
+  return { level, xp, wins, losses };
+}
+
+function buildCardStats(cardRow, fallbackCard) {
+  if (cardRow && cardRow.pwr != null) {
+    return {
+      pwr:     cardRow.pwr,
+      def:     cardRow.def,
+      spd:     cardRow.spd,
+      element: cardRow.element,
+      ability: cardRow.ability,
+      rarity:  cardRow.rarity,
+      level:   cardRow.level || 1,
+    };
+  }
+
+  if (fallbackCard && fallbackCard.pwr != null) {
+    return {
+      pwr:     fallbackCard.pwr,
+      def:     fallbackCard.def,
+      spd:     fallbackCard.spd,
+      element: fallbackCard.element,
+      ability: fallbackCard.ability,
+      rarity:  fallbackCard.rarity,
+      level:   fallbackCard.level || cardRow?.level || 1,
+    };
+  }
+
+  return {
+    ...deriveStatsFromHash(fallbackCard?.tokenId),
+    level: cardRow?.level || 1,
+  };
+}
+
+function normalizeRarity(rarity) {
+  const value = String(rarity || 'COMMON').toUpperCase();
+  return RARITY_RATING_BONUS[value] != null ? value : 'COMMON';
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseDbDate(value) {
+  if (!value) return null;
+  const timestamp = Date.parse(String(value).replace(' ', 'T') + 'Z');
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getCardPowerScore(cardRow, fallbackCard) {
+  const stats  = buildCardStats(cardRow, fallbackCard);
+  const level  = Math.max(1, Number(stats.level) || 1);
+  const avg    = ((Number(stats.pwr) || 50) + (Number(stats.def) || 50) + (Number(stats.spd) || 50)) / 3;
+  const rarity = normalizeRarity(stats.rarity || fallbackCard?.rarity || cardRow?.rarity);
+  return Math.round(level * 120 + avg * 6 + (RARITY_RATING_BONUS[rarity] || 0));
+}
+
+function seedCompetitiveRating(cardRow, fallbackCard) {
+  const stats  = buildCardStats(cardRow, fallbackCard);
+  const level  = Math.max(1, Number(stats.level) || 1);
+  const avg    = ((Number(stats.pwr) || 50) + (Number(stats.def) || 50) + (Number(stats.spd) || 50)) / 3;
+  const rarity = normalizeRarity(stats.rarity || fallbackCard?.rarity || cardRow?.rarity);
+  return clamp(
+    Math.round(DEFAULT_COMPETITIVE_RATING + (avg - 50) * 4 + (level - 1) * 18 + (RARITY_COMPETITIVE_SEED[rarity] || 0)),
+    1200,
+    1800
+  );
+}
+
+function getCompetitiveState(cardRow, fallbackCard) {
+  const seededRating = seedCompetitiveRating(cardRow, fallbackCard);
+  const powerScore   = getCardPowerScore(cardRow, fallbackCard);
+
+  return {
+    rating: Number(cardRow?.competitive_rating ?? cardRow?.rating ?? seededRating),
+    rd: Number(cardRow?.competitive_rd ?? cardRow?.rd ?? DEFAULT_COMPETITIVE_RD),
+    volatility: Number(cardRow?.competitive_volatility ?? cardRow?.volatility ?? DEFAULT_COMPETITIVE_VOLATILITY),
+    matches: Math.max(0, Number(cardRow?.competitive_matches ?? cardRow?.matches) || 0),
+    lastRatedAt: cardRow?.last_rated_at || cardRow?.lastRatedAt || null,
+    powerScore,
+    powerBucket: Math.floor(powerScore / POWER_BUCKET_SIZE),
+  };
+}
+
+function competitiveTierFromRating(rating) {
+  if (rating >= 2200) return 'Grandmaster';
+  if (rating >= 2000) return 'Master';
+  if (rating >= 1800) return 'Diamond';
+  if (rating >= 1650) return 'Platinum';
+  if (rating >= 1500) return 'Gold';
+  if (rating >= 1350) return 'Silver';
+  return 'Bronze';
+}
+
+function computeMatchProfile(cardRow, fallbackCard) {
+  const state = getCompetitiveState(cardRow, fallbackCard);
+
+  return {
+    rating: Math.round(state.rating),
+    bucketKey: state.powerBucket,
+    ratingDeviation: Math.round(state.rd),
+    matches: state.matches,
+    tier: competitiveTierFromRating(state.rating),
+  };
+}
+
+function toGlicko2Scale(rating) {
+  return (rating - DEFAULT_COMPETITIVE_RATING) / GLICKO2_SCALE;
+}
+
+function fromGlicko2Scale(value) {
+  return value * GLICKO2_SCALE + DEFAULT_COMPETITIVE_RATING;
+}
+
+function glickoG(phi) {
+  return 1 / Math.sqrt(1 + (3 * phi * phi) / (Math.PI * Math.PI));
+}
+
+function glickoE(mu, opponentMu, opponentPhi) {
+  return 1 / (1 + Math.exp(-glickoG(opponentPhi) * (mu - opponentMu)));
+}
+
+function inflateCompetitiveRd(state, nowMs = Date.now()) {
+  const lastRatedAt = parseDbDate(state.lastRatedAt);
+  if (!lastRatedAt) return state.rd;
+
+  const elapsedDays = Math.floor((nowMs - lastRatedAt) / 86400000);
+  if (elapsedDays <= 0) return state.rd;
+
+  const phi = state.rd / GLICKO2_SCALE;
+  const phiStar = Math.sqrt(phi * phi + elapsedDays * state.volatility * state.volatility);
+  return clamp(phiStar * GLICKO2_SCALE, 30, DEFAULT_COMPETITIVE_RD);
+}
+
+function updateCompetitiveRating(playerState, opponentState, score) {
+  const workingPlayer = {
+    ...playerState,
+    rd: inflateCompetitiveRd(playerState),
+  };
+  const workingOpponent = {
+    ...opponentState,
+    rd: inflateCompetitiveRd(opponentState),
+  };
+
+  const mu = toGlicko2Scale(workingPlayer.rating);
+  const phi = workingPlayer.rd / GLICKO2_SCALE;
+  const muJ = toGlicko2Scale(workingOpponent.rating);
+  const phiJ = workingOpponent.rd / GLICKO2_SCALE;
+  const g = glickoG(phiJ);
+  const e = glickoE(mu, muJ, phiJ);
+  const v = 1 / (g * g * e * (1 - e));
+  const delta = v * g * (score - e);
+  const sigma = workingPlayer.volatility;
+  const a = Math.log(sigma * sigma);
+
+  const f = (x) => {
+    const ex = Math.exp(x);
+    return (ex * (delta * delta - phi * phi - v - ex)) / (2 * Math.pow(phi * phi + v + ex, 2)) - ((x - a) / (COMPETITIVE_TAU * COMPETITIVE_TAU));
+  };
+
+  let A = a;
+  let B;
+  if (delta * delta > phi * phi + v) {
+    B = Math.log(delta * delta - phi * phi - v);
+  } else {
+    let k = 1;
+    while (f(a - k * COMPETITIVE_TAU) < 0) k += 1;
+    B = a - k * COMPETITIVE_TAU;
+  }
+
+  let fA = f(A);
+  let fB = f(B);
+  while (Math.abs(B - A) > 0.000001) {
+    const C = A + ((A - B) * fA) / (fB - fA);
+    const fC = f(C);
+    if (fC * fB < 0) {
+      A = B;
+      fA = fB;
+    } else {
+      fA /= 2;
+    }
+    B = C;
+    fB = fC;
+  }
+
+  const newSigma = Math.exp(A / 2);
+  const phiStar = Math.sqrt(phi * phi + newSigma * newSigma);
+  const newPhi = 1 / Math.sqrt((1 / (phiStar * phiStar)) + (1 / v));
+  const newMu = mu + (newPhi * newPhi) * g * (score - e);
+
+  return {
+    rating: clamp(fromGlicko2Scale(newMu), 900, 2600),
+    rd: clamp(newPhi * GLICKO2_SCALE, 30, DEFAULT_COMPETITIVE_RD),
+    volatility: newSigma,
+    matches: workingPlayer.matches + 1,
+    lastRatedAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+  };
+}
+
+function attachCompetitiveMeta(cardRow, fallbackCard = cardRow) {
+  if (!cardRow && !fallbackCard) return null;
+
+  const state = getCompetitiveState(cardRow, fallbackCard);
+  return {
+    ...(cardRow || fallbackCard || {}),
+    competitive_rating: Math.round(state.rating),
+    competitive_rd: Math.round(state.rd),
+    competitive_volatility: Number(state.volatility.toFixed(5)),
+    competitive_matches: state.matches,
+    competitive_tier: competitiveTierFromRating(state.rating),
+  };
+}
+
+function attachCardLoadout(cardRow, loadout, fallbackClass = cardRow?.element) {
+  if (!cardRow) return null;
+  return buildEquipmentCardView(attachCompetitiveMeta(cardRow), loadout, fallbackClass);
+}
+
+async function getPlayerProgress(env, address) {
+  await env.DB.prepare(
+    `INSERT INTO player_progress (address, forge_shards, updated_at)
+     VALUES (?, 0, CURRENT_TIMESTAMP)
+     ON CONFLICT(address) DO NOTHING`
+  ).bind(address).run();
+
+  return env.DB.prepare(
+    'SELECT * FROM player_progress WHERE address = ?'
+  ).bind(address).first();
+}
+
+async function getUnlockedEquipmentIdsForClass(env, address, cardClass) {
+  const normalized = normalizeCardClass(cardClass);
+  const rows = await env.DB.prepare(
+    'SELECT equipment_id FROM equipment_unlocks WHERE address = ? AND class_key = ? ORDER BY equipment_id ASC'
+  ).bind(address, normalized).all();
+
+  return Array.from(new Set([
+    ...getStarterUnlockedIds(normalized),
+    ...(rows.results || []).map((row) => row.equipment_id),
+  ]));
+}
+
+async function hasActiveQueueLock(env, address) {
+  const row = await env.DB.prepare(
+    "SELECT status FROM battle_queue WHERE address = ? AND status IN ('searching', 'matching') LIMIT 1"
+  ).bind(address).first();
+  return !!row;
+}
+
+async function getCardLoadoutRecord(env, address, tokenId, cardClass) {
+  const normalizedClass = normalizeCardClass(cardClass);
+  const existing = await env.DB.prepare(
+    'SELECT * FROM card_loadouts WHERE address = ? AND token_id = ?'
+  ).bind(address, String(tokenId)).first();
+
+  if (existing) return buildLoadoutView(existing, normalizedClass);
+
+  const starter = getStarterLoadout(normalizedClass);
+  await env.DB.prepare(
+    `INSERT INTO card_loadouts (address, token_id, power_item_id, defense_item_id, speed_item_id, updated_at)
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(address, token_id) DO NOTHING`
+  ).bind(address, String(tokenId), starter.powerItemId, starter.defenseItemId, starter.speedItemId).run();
+
+  return buildLoadoutView(starter, normalizedClass);
+}
+
+function buildEquipmentProgressPayload(address, cardClass, progressRow, unlockedIds) {
+  return {
+    address,
+    classKey: normalizeCardClass(cardClass),
+    forgeShards: Number(progressRow?.forge_shards || 0),
+    unlockedEquipmentIds: unlockedIds,
+  };
+}
+
+function buildResolvedBattlePayload(battle, address, myCard) {
+  const isP1   = battle.player1 === address;
+  const won    = battle.winner === address;
+  const draw   = battle.winner === null;
+  const winner = won ? 'p1' : draw ? 'draw' : 'p2';
+  const mySnapshot = safeJsonParse(isP1 ? battle.p1_card : battle.p2_card, {});
+  const oppSnapshot = safeJsonParse(isP1 ? battle.p2_card : battle.p1_card, {});
+
+  let rounds = safeJsonParse(battle.rounds, []);
+  if (!isP1) {
+    rounds = rounds.map((round) => ({
+      ...round,
+      p1: round.p2,
+      p2: round.p1,
+      result: round.result === 'p1' ? 'p2' : round.result === 'p2' ? 'p1' : round.result,
+    }));
+  }
+
+  return {
+    status:   'matched',
+    ticketId: isP1 ? battle.p1_ticket_id : battle.p2_ticket_id,
+    battleId: battle.id,
+    rounds,
+    winner,
+    won,
+    opponent: {
+      address: isP1 ? battle.player2 : battle.player1,
+      card:    buildEquipmentCardView(attachCompetitiveMeta(oppSnapshot), oppSnapshot.equipmentLoadout, oppSnapshot.element),
+    },
+    card: buildEquipmentCardView(attachCompetitiveMeta(myCard, mySnapshot), mySnapshot.equipmentLoadout, mySnapshot.element) || null,
+  };
+}
+
+async function findBattleByTicket(env, ticketId) {
+  if (!ticketId) return null;
+
+  return env.DB.prepare(
+    `SELECT *
+       FROM battles
+      WHERE p1_ticket_id = ? OR p2_ticket_id = ?
+      ORDER BY resolved_at DESC, created_at DESC
+      LIMIT 1`
+  ).bind(ticketId, ticketId).first();
+}
+
+async function ensureMatchmakingSchema(env) {
+  if (!_matchmakingSchemaPromise) {
+    _matchmakingSchemaPromise = (async () => {
+      await env.DB.batch([
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS game_cards (
+             address TEXT PRIMARY KEY,
+             token_id TEXT NOT NULL,
+             name TEXT,
+             image TEXT,
+             pwr INTEGER,
+             def INTEGER,
+             spd INTEGER,
+             element TEXT,
+             ability TEXT,
+             rarity TEXT,
+             traits_json TEXT,
+             level INTEGER DEFAULT 1,
+             xp INTEGER DEFAULT 0,
+             wins INTEGER DEFAULT 0,
+             losses INTEGER DEFAULT 0,
+             competitive_rating REAL DEFAULT ${DEFAULT_COMPETITIVE_RATING},
+             competitive_rd REAL DEFAULT ${DEFAULT_COMPETITIVE_RD},
+             competitive_volatility REAL DEFAULT ${DEFAULT_COMPETITIVE_VOLATILITY},
+             competitive_matches INTEGER DEFAULT 0,
+             last_rated_at DATETIME,
+             registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS battle_queue (
+             address TEXT PRIMARY KEY,
+             ticket_id TEXT UNIQUE,
+             card_json TEXT NOT NULL,
+             status TEXT DEFAULT 'searching',
+             match_id TEXT,
+             rating INTEGER DEFAULT 0,
+             bucket_key INTEGER DEFAULT 0,
+             queued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             matched_at DATETIME,
+             expires_at DATETIME,
+             updated_at DATETIME
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS battles (
+             id TEXT PRIMARY KEY,
+             player1 TEXT NOT NULL,
+             player2 TEXT NOT NULL,
+             winner TEXT,
+             p1_card TEXT,
+             p2_card TEXT,
+             rounds TEXT,
+             status TEXT DEFAULT 'pending',
+             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             resolved_at DATETIME,
+             p1_ticket_id TEXT,
+             p2_ticket_id TEXT
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS profiles (
+             address TEXT PRIMARY KEY,
+             display_name TEXT,
+             bio TEXT,
+             avatar_url TEXT,
+             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS player_progress (
+             address TEXT PRIMARY KEY,
+             forge_shards INTEGER DEFAULT 0,
+             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS equipment_unlocks (
+             address TEXT NOT NULL,
+             class_key TEXT NOT NULL,
+             equipment_id TEXT NOT NULL,
+             unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (address, equipment_id)
+           )`
+        ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS card_loadouts (
+             address TEXT NOT NULL,
+             token_id TEXT NOT NULL,
+             power_item_id TEXT NOT NULL,
+             defense_item_id TEXT NOT NULL,
+             speed_item_id TEXT NOT NULL,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (address, token_id)
+           )`
+        ),
+      ]);
+
+      const [queueInfo, battleInfo, cardInfo] = await env.DB.batch([
+        env.DB.prepare('PRAGMA table_info(battle_queue)'),
+        env.DB.prepare('PRAGMA table_info(battles)'),
+        env.DB.prepare('PRAGMA table_info(game_cards)'),
+      ]);
+
+      const queueColumns  = new Set((queueInfo.results || []).map((row) => row.name));
+      const battleColumns = new Set((battleInfo.results || []).map((row) => row.name));
+      const cardColumns   = new Set((cardInfo.results || []).map((row) => row.name));
+      const migrations    = [];
+
+      if (!queueColumns.has('ticket_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN ticket_id TEXT'));
+      }
+      if (!queueColumns.has('status')) {
+        migrations.push(env.DB.prepare("ALTER TABLE battle_queue ADD COLUMN status TEXT"));
+      }
+      if (!queueColumns.has('match_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN match_id TEXT'));
+      }
+      if (!queueColumns.has('matched_at')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN matched_at DATETIME'));
+      }
+      if (!queueColumns.has('expires_at')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN expires_at DATETIME'));
+      }
+      if (!queueColumns.has('updated_at')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN updated_at DATETIME'));
+      }
+      if (!queueColumns.has('rating')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN rating INTEGER'));
+      }
+      if (!queueColumns.has('bucket_key')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battle_queue ADD COLUMN bucket_key INTEGER'));
+      }
+      if (!battleColumns.has('p1_ticket_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battles ADD COLUMN p1_ticket_id TEXT'));
+      }
+      if (!battleColumns.has('p2_ticket_id')) {
+        migrations.push(env.DB.prepare('ALTER TABLE battles ADD COLUMN p2_ticket_id TEXT'));
+      }
+      if (!cardColumns.has('competitive_rating')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN competitive_rating REAL'));
+      }
+      if (!cardColumns.has('pwr')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN pwr INTEGER'));
+      }
+      if (!cardColumns.has('def')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN def INTEGER'));
+      }
+      if (!cardColumns.has('spd')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN spd INTEGER'));
+      }
+      if (!cardColumns.has('element')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN element TEXT'));
+      }
+      if (!cardColumns.has('ability')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN ability TEXT'));
+      }
+      if (!cardColumns.has('rarity')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN rarity TEXT'));
+      }
+      if (!cardColumns.has('traits_json')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN traits_json TEXT'));
+      }
+      if (!cardColumns.has('competitive_rd')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN competitive_rd REAL'));
+      }
+      if (!cardColumns.has('competitive_volatility')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN competitive_volatility REAL'));
+      }
+      if (!cardColumns.has('competitive_matches')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN competitive_matches INTEGER'));
+      }
+      if (!cardColumns.has('last_rated_at')) {
+        migrations.push(env.DB.prepare('ALTER TABLE game_cards ADD COLUMN last_rated_at DATETIME'));
+      }
+
+      if (migrations.length) {
+        await env.DB.batch(migrations);
+      }
+
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE battle_queue
+              SET ticket_id  = COALESCE(ticket_id, lower(hex(randomblob(16)))),
+                  status     = COALESCE(status, 'searching'),
+                  expires_at = COALESCE(expires_at, datetime(COALESCE(queued_at, CURRENT_TIMESTAMP), '+${QUEUE_TICKET_TTL_SECONDS} seconds')),
+                  updated_at = COALESCE(updated_at, COALESCE(queued_at, CURRENT_TIMESTAMP)),
+                  rating     = COALESCE(rating, 0),
+                  bucket_key = COALESCE(bucket_key, 0)
+            WHERE ticket_id IS NULL
+               OR status IS NULL
+               OR expires_at IS NULL
+               OR updated_at IS NULL
+               OR rating IS NULL
+               OR bucket_key IS NULL`
+        ),
+        env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_battle_queue_ticket_id ON battle_queue(ticket_id)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battle_queue_status_queued_at ON battle_queue(status, queued_at)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battle_queue_status_rating ON battle_queue(status, rating, queued_at)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battle_queue_bucket_key ON battle_queue(bucket_key, queued_at)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battle_queue_match_id ON battle_queue(match_id)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battles_p1_ticket_id ON battles(p1_ticket_id)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_battles_p2_ticket_id ON battles(p2_ticket_id)'),
+        env.DB.prepare(
+          `UPDATE game_cards
+              SET competitive_rating = COALESCE(competitive_rating, ${DEFAULT_COMPETITIVE_RATING}),
+                  competitive_rd = COALESCE(competitive_rd, ${DEFAULT_COMPETITIVE_RD}),
+                  competitive_volatility = COALESCE(competitive_volatility, ${DEFAULT_COMPETITIVE_VOLATILITY}),
+                  competitive_matches = COALESCE(competitive_matches, 0)
+            WHERE competitive_rating IS NULL
+               OR competitive_rd IS NULL
+               OR competitive_volatility IS NULL
+               OR competitive_matches IS NULL`
+        ),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_game_cards_competitive_rating ON game_cards(competitive_rating DESC, wins DESC)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_equipment_unlocks_class_key ON equipment_unlocks(address, class_key)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_card_loadouts_address ON card_loadouts(address, token_id)'),
+      ]);
+    })().catch((err) => {
+      _matchmakingSchemaPromise = null;
+      throw err;
+    });
+  }
+
+  return _matchmakingSchemaPromise;
+}
+
+async function cleanupQueue(env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      "DELETE FROM battle_queue WHERE status = 'searching' AND expires_at < CURRENT_TIMESTAMP"
+    ),
+    env.DB.prepare(
+      `UPDATE battle_queue
+          SET status = 'searching',
+              match_id = NULL,
+              matched_at = NULL,
+              expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+              updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'matching' AND expires_at < CURRENT_TIMESTAMP`
+    ),
+    env.DB.prepare(
+      `DELETE FROM battle_queue
+        WHERE status = 'matched'
+          AND matched_at < datetime('now', '-${MATCHED_TICKET_TTL_SECONDS} seconds')`
+    ),
+  ]);
+}
+
+async function loadQueueRow(env, address, ticketId = null) {
+  if (ticketId) {
+    return env.DB.prepare(
+      'SELECT * FROM battle_queue WHERE address = ? AND ticket_id = ?'
+    ).bind(address, ticketId).first();
+  }
+
+  return env.DB.prepare(
+    'SELECT * FROM battle_queue WHERE address = ? ORDER BY updated_at DESC LIMIT 1'
+  ).bind(address).first();
+}
+
+async function loadQueueBattlePayload(env, address, queueRow) {
+  if (!queueRow?.match_id) return null;
+
+  const battle = await env.DB.prepare(
+    'SELECT * FROM battles WHERE id = ? LIMIT 1'
+  ).bind(queueRow.match_id).first();
+
+  if (!battle) return null;
+
+  const myCard = await env.DB.prepare(
+    'SELECT * FROM game_cards WHERE address = ?'
+  ).bind(address).first();
+
+  return buildResolvedBattlePayload(battle, address, myCard);
+}
+
+async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId) {
+  const selfCard = safeJsonParse(selfQueueRow.card_json, {});
+  const oppCard  = safeJsonParse(opponentQueueRow.card_json, {});
+  const selfAddr = selfQueueRow.address;
+  const oppAddr  = opponentQueueRow.address;
+
+  const p1Row = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(selfAddr).first();
+  const p2Row = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(oppAddr).first();
+  const p1ProgressRow = await getPlayerProgress(env, selfAddr);
+  const p2ProgressRow = await getPlayerProgress(env, oppAddr);
+
+  const p1Stats = buildCardStats(p1Row, selfCard);
+  const p2Stats = buildCardStats(p2Row, oppCard);
+  const seed    = battleSeed(String(selfCard.tokenId), String(oppCard.tokenId));
+  const result  = resolveBattle(selfCard, oppCard, seed);
+  const winner  = result.winner === 'p1' ? selfAddr : result.winner === 'p2' ? oppAddr : null;
+
+  const p1XP       = calcXP(p1Stats.rarity, p2Stats.rarity, result.winner === 'p1', result.winner === 'draw');
+  const p2XP       = calcXP(p2Stats.rarity, p1Stats.rarity, result.winner === 'p2', result.winner === 'draw');
+  const p1Forge    = getForgeShardReward(result.winner === 'p1' ? 'win' : result.winner === 'draw' ? 'draw' : 'loss', Number(p1Row?.competitive_rating || DEFAULT_COMPETITIVE_RATING), Number(p2Row?.competitive_rating || DEFAULT_COMPETITIVE_RATING));
+  const p2Forge    = getForgeShardReward(result.winner === 'p2' ? 'win' : result.winner === 'draw' ? 'draw' : 'loss', Number(p2Row?.competitive_rating || DEFAULT_COMPETITIVE_RATING), Number(p1Row?.competitive_rating || DEFAULT_COMPETITIVE_RATING));
+  const p1Progress = applyBattleProgress(p1Row, p1XP, result.winner === 'p1' ? 'win' : result.winner === 'p2' ? 'loss' : 'draw');
+  const p2Progress = applyBattleProgress(p2Row, p2XP, result.winner === 'p2' ? 'win' : result.winner === 'p1' ? 'loss' : 'draw');
+  const p1Competitive = updateCompetitiveRating(
+    getCompetitiveState(p1Row, selfCard),
+    getCompetitiveState(p2Row, oppCard),
+    result.winner === 'p1' ? 1 : result.winner === 'draw' ? 0.5 : 0
+  );
+  const p2Competitive = updateCompetitiveRating(
+    getCompetitiveState(p2Row, oppCard),
+    getCompetitiveState(p1Row, selfCard),
+    result.winner === 'p2' ? 1 : result.winner === 'draw' ? 0.5 : 0
+  );
+  const writes     = [
+    env.DB.prepare(
+      `INSERT INTO battles (
+         id, player1, player2, winner, p1_card, p2_card, rounds, status, resolved_at, p1_ticket_id, p2_ticket_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`
+    ).bind(
+      battleId,
+      selfAddr,
+      oppAddr,
+      winner,
+      JSON.stringify(selfCard),
+      JSON.stringify(oppCard),
+      JSON.stringify(result.rounds),
+      'resolved',
+      selfQueueRow.ticket_id,
+      opponentQueueRow.ticket_id
+    ),
+  ];
+
+  if (p1Row) {
+    writes.push(
+      env.DB.prepare(
+        `UPDATE game_cards
+            SET level = ?, xp = ?, wins = ?, losses = ?,
+                competitive_rating = ?, competitive_rd = ?, competitive_volatility = ?, competitive_matches = ?, last_rated_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?`
+      ).bind(
+        p1Progress.level,
+        p1Progress.xp,
+        p1Progress.wins,
+        p1Progress.losses,
+        p1Competitive.rating,
+        p1Competitive.rd,
+        p1Competitive.volatility,
+        p1Competitive.matches,
+        p1Competitive.lastRatedAt,
+        selfAddr
+      )
+    );
+  }
+
+  if (p2Row) {
+    writes.push(
+      env.DB.prepare(
+        `UPDATE game_cards
+            SET level = ?, xp = ?, wins = ?, losses = ?,
+                competitive_rating = ?, competitive_rd = ?, competitive_volatility = ?, competitive_matches = ?, last_rated_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?`
+      ).bind(
+        p2Progress.level,
+        p2Progress.xp,
+        p2Progress.wins,
+        p2Progress.losses,
+        p2Competitive.rating,
+        p2Competitive.rd,
+        p2Competitive.volatility,
+        p2Competitive.matches,
+        p2Competitive.lastRatedAt,
+        oppAddr
+      )
+    );
+  }
+
+  writes.push(
+    env.DB.prepare(
+      `INSERT INTO player_progress (address, forge_shards, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(address) DO UPDATE SET
+         forge_shards = player_progress.forge_shards + excluded.forge_shards,
+         updated_at = CURRENT_TIMESTAMP`
+    ).bind(selfAddr, p1Forge)
+  );
+  writes.push(
+    env.DB.prepare(
+      `INSERT INTO player_progress (address, forge_shards, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(address) DO UPDATE SET
+         forge_shards = player_progress.forge_shards + excluded.forge_shards,
+         updated_at = CURRENT_TIMESTAMP`
+    ).bind(oppAddr, p2Forge)
+  );
+
+  await env.DB.batch(writes);
+
+  const myCard = attachCardLoadout(
+    p1Row
+      ? { ...p1Row, ...p1Progress, ...p1Competitive, forge_shards: Number(p1ProgressRow?.forge_shards || 0) + p1Forge }
+      : { ...selfCard, ...p1Stats, ...p1Progress, ...p1Competitive, forge_shards: Number(p1ProgressRow?.forge_shards || 0) + p1Forge },
+    selfCard.equipmentLoadout,
+    selfCard.element
+  );
+  const oppPayload = attachCardLoadout(
+    p2Row
+      ? { ...p2Row, ...p2Progress, ...p2Competitive, forge_shards: Number(p2ProgressRow?.forge_shards || 0) + p2Forge }
+      : { ...oppCard, ...p2Stats, ...p2Progress, ...p2Competitive, forge_shards: Number(p2ProgressRow?.forge_shards || 0) + p2Forge },
+    oppCard.equipmentLoadout,
+    oppCard.element
+  );
+
+  return {
+    status:   'matched',
+    ticketId: selfQueueRow.ticket_id,
+    battleId,
+    rounds:   result.rounds,
+    winner:   result.winner,
+    won:      result.winner === 'p1',
+    opponent: { address: oppAddr, card: oppPayload },
+    card:     myCard,
+  };
+}
+
+async function attemptMatchForTicket(env, address, ticketId) {
+  const queueRow = await loadQueueRow(env, address, ticketId);
+  if (!queueRow || queueRow.status !== 'searching') return null;
+
+  const battleId = crypto.randomUUID();
+  const selfRow = await env.DB.prepare(
+    `UPDATE battle_queue
+        SET status = 'matching',
+            match_id = ?,
+            matched_at = NULL,
+            expires_at = datetime('now', '+${MATCH_ASSEMBLY_TTL_SECONDS} seconds'),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE address = ?
+        AND ticket_id = ?
+        AND status = 'searching'
+      RETURNING address, ticket_id, card_json, rating, bucket_key`
+  ).bind(battleId, address, ticketId).first();
+
+  if (!selfRow) return null;
+
+  const opponent = await env.DB.prepare(
+    `UPDATE battle_queue
+        SET status = 'matched',
+            match_id = ?,
+            matched_at = CURRENT_TIMESTAMP,
+            expires_at = datetime('now', '+${MATCHED_TICKET_TTL_SECONDS} seconds'),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE address = (
+        SELECT address
+          FROM battle_queue
+         WHERE address != ?
+           AND status = 'searching'
+           AND expires_at > CURRENT_TIMESTAMP
+           AND ABS(rating - ?) <= CASE
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 45 THEN 320
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 30 THEN 220
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 15 THEN 140
+             ELSE 80
+           END
+         ORDER BY ABS(rating - ?), ABS(bucket_key - ?), queued_at ASC
+         LIMIT 1
+      )
+      RETURNING address, ticket_id, card_json, rating, bucket_key`
+  ).bind(battleId, address, selfRow.rating, selfRow.rating, selfRow.bucket_key).first();
+
+  if (!opponent) {
+    await env.DB.prepare(
+      `UPDATE battle_queue
+          SET status = 'searching',
+              match_id = NULL,
+              matched_at = NULL,
+              expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+              updated_at = CURRENT_TIMESTAMP
+        WHERE address = ?
+          AND ticket_id = ?
+          AND status = 'matching'
+          AND match_id = ?`
+    ).bind(address, ticketId, battleId).run();
+
+    return null;
+  }
+
+  const finalizedSelf = await env.DB.prepare(
+    `UPDATE battle_queue
+        SET status = 'matched',
+            matched_at = CURRENT_TIMESTAMP,
+            expires_at = datetime('now', '+${MATCHED_TICKET_TTL_SECONDS} seconds'),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE address = ?
+        AND ticket_id = ?
+        AND status = 'matching'
+        AND match_id = ?
+      RETURNING address, ticket_id, card_json, rating, bucket_key`
+  ).bind(address, ticketId, battleId).first();
+
+  if (!finalizedSelf) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE battle_queue
+            SET status = 'searching',
+                match_id = NULL,
+                matched_at = NULL,
+                expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?
+            AND ticket_id = ?
+            AND match_id = ?`
+      ).bind(address, ticketId, battleId),
+      env.DB.prepare(
+        `UPDATE battle_queue
+            SET status = 'searching',
+                match_id = NULL,
+                matched_at = NULL,
+                expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?
+            AND ticket_id = ?
+            AND match_id = ?`
+      ).bind(opponent.address, opponent.ticket_id, battleId),
+    ]);
+
+    return null;
+  }
+
+  try {
+    return await resolveQueuedBattle(env, finalizedSelf, opponent, battleId);
+  } catch (error) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE battle_queue
+            SET status = 'searching',
+                match_id = NULL,
+                matched_at = NULL,
+                expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?
+            AND ticket_id = ?
+            AND match_id = ?`
+      ).bind(address, ticketId, battleId),
+      env.DB.prepare(
+        `UPDATE battle_queue
+            SET status = 'searching',
+                match_id = NULL,
+                matched_at = NULL,
+                expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE address = ?
+            AND ticket_id = ?
+            AND match_id = ?`
+      ).bind(opponent.address, opponent.ticket_id, battleId),
+    ]).catch(() => {});
+
+    throw error;
+  }
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -216,6 +1155,9 @@ export default {
     }
 
     try {
+      if (path.startsWith('/api/game') || path.startsWith('/api/profile')) {
+        await ensureMatchmakingSchema(env);
+      }
       // ── Wallets ──────────────────────────────────────────────────────────
       if (method === 'POST' && path === '/api/wallets') {
         return handleSubmitWallet(request, env);
@@ -268,26 +1210,61 @@ export default {
           'SELECT * FROM game_cards WHERE address = ?'
         ).bind(address).first();
         if (!row) return json({ error: 'not_found' }, 404);
-        return json({ card: row });
+        const loadout = await getCardLoadoutRecord(env, address, row.token_id, row.element);
+        return json({ card: attachCardLoadout(row, loadout, row.element) });
       }
 
       // ── Game: Enter queue ─────────────────────────────────────────────────
+      if (method === 'GET' && path === '/api/game/equipment/catalog') {
+        const classKey = url.searchParams.get('class') || 'VOID';
+        return handleEquipmentCatalog(classKey);
+      }
+      if (method === 'GET' && path.startsWith('/api/game/equipment/progress/')) {
+        const address = path.split('/').pop().toLowerCase();
+        return handleEquipmentProgress(address, env);
+      }
+      if (method === 'POST' && path === '/api/game/equipment/unlock') {
+        return handleEquipmentUnlock(request, env);
+      }
+      if (method === 'POST' && path === '/api/game/equipment/loadout') {
+        return handleEquipmentLoadoutUpdate(request, env);
+      }
+      if (method === 'GET' && /^\/api\/game\/equipment\/loadout\/[^/]+\/[^/]+$/.test(path)) {
+        const parts = path.split('/');
+        const address = parts[5].toLowerCase();
+        const tokenId = parts[6];
+        return handleEquipmentLoadoutGet(address, tokenId, env);
+      }
+
       if (method === 'POST' && path === '/api/game/queue') {
         return handleQueue(request, env);
+      }
+      if (method === 'POST' && path === '/api/game/queue/cancel') {
+        return handleQueueCancel(request, env);
       }
 
       // ── Game: Queue status ────────────────────────────────────────────────
       if (method === 'GET' && path.startsWith('/api/game/queue/')) {
-        const address = path.split('/').pop().toLowerCase();
-        return handleQueueStatus(address, env);
+        const address  = path.split('/').pop().toLowerCase();
+        const ticketId = url.searchParams.get('ticketId') || null;
+        return handleQueueStatus(address, ticketId, env);
       }
 
       // ── Game: Leaderboard ─────────────────────────────────────────────────
       if (method === 'GET' && path === '/api/game/leaderboard') {
         const rows = await env.DB.prepare(
-          'SELECT address, level, xp, wins, losses FROM game_cards ORDER BY wins DESC, level DESC LIMIT 50'
+          `SELECT address, level, xp, wins, losses, competitive_rating, competitive_matches
+             FROM game_cards
+            ORDER BY competitive_rating DESC, wins DESC, level DESC
+            LIMIT 50`
         ).all();
-        return json({ leaderboard: rows.results });
+        return json({
+          leaderboard: rows.results.map((row) => ({
+            ...row,
+            competitive_rating: Math.round(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
+            competitive_tier: competitiveTierFromRating(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
+          })),
+        });
       }
 
       // ── Profile: Get ──────────────────────────────────────────────────────
@@ -298,9 +1275,18 @@ export default {
           'SELECT * FROM profiles WHERE address = ?'
         ).bind(address).first();
         const card = await env.DB.prepare(
-          'SELECT level, xp, wins, losses, name, image, element, rarity FROM game_cards WHERE address = ?'
+          `SELECT token_id, level, xp, wins, losses, name, image, element, rarity,
+                  competitive_rating, competitive_rd, competitive_volatility, competitive_matches, last_rated_at
+             FROM game_cards
+            WHERE address = ?`
         ).bind(address).first();
-        return json({ profile: profile || null, card: card || null });
+        const progress = await getPlayerProgress(env, address);
+        const loadout = card ? await getCardLoadoutRecord(env, address, card.token_id || card.tokenId || '', card.element) : null;
+        return json({
+          profile: profile || null,
+          card: card ? attachCardLoadout(card, loadout, card.element) : null,
+          forgeShards: Number(progress?.forge_shards || 0),
+        });
       }
 
       // ── Profile: Upsert ───────────────────────────────────────────────────
@@ -372,6 +1358,8 @@ async function handleAllowlist(request, env) {
 }
 
 async function handleGameRegister(request, env) {
+  await ensureMatchmakingSchema(env);
+
   const body = await request.json();
   const { address, tokenId, name, image, pwr, def, spd, element, ability, rarity, attributes } = body;
 
@@ -388,25 +1376,252 @@ async function handleGameRegister(request, env) {
   const existing = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(addr).first();
+  const seedCard = { tokenId: tid, pwr, def, spd, element, ability, rarity, level: existing?.level || 1 };
+  const seededState = getCompetitiveState(existing, seedCard);
 
   if (existing) {
     await env.DB.prepare(
       `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
        pwr = ?, def = ?, spd = ?, element = ?, ability = ?, rarity = ?, traits_json = ?,
+       competitive_rating = COALESCE(competitive_rating, ?),
+       competitive_rd = COALESCE(competitive_rd, ?),
+       competitive_volatility = COALESCE(competitive_volatility, ?),
+       competitive_matches = COALESCE(competitive_matches, 0),
        updated_at = CURRENT_TIMESTAMP WHERE address = ?`
-    ).bind(tid, cleanName, cleanImage, pwr ?? null, def ?? null, spd ?? null, element ?? null, ability ?? null, rarity ?? null, traitsJson, addr).run();
+    ).bind(
+      tid,
+      cleanName,
+      cleanImage,
+      pwr ?? null,
+      def ?? null,
+      spd ?? null,
+      element ?? null,
+      ability ?? null,
+      rarity ?? null,
+      traitsJson,
+      seededState.rating,
+      seededState.rd,
+      seededState.volatility,
+      addr
+    ).run();
   } else {
     await env.DB.prepare(
-      `INSERT INTO game_cards (address, token_id, name, image, pwr, def, spd, element, ability, rarity, traits_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(addr, tid, cleanName, cleanImage, pwr ?? null, def ?? null, spd ?? null, element ?? null, ability ?? null, rarity ?? null, traitsJson).run();
+      `INSERT INTO game_cards (
+         address, token_id, name, image, pwr, def, spd, element, ability, rarity, traits_json,
+         competitive_rating, competitive_rd, competitive_volatility, competitive_matches
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      addr,
+      tid,
+      cleanName,
+      cleanImage,
+      pwr ?? null,
+      def ?? null,
+      spd ?? null,
+      element ?? null,
+      ability ?? null,
+      rarity ?? null,
+      traitsJson,
+      seededState.rating,
+      seededState.rd,
+      seededState.volatility,
+      seededState.matches
+    ).run();
   }
 
   const card = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
-  return json({ success: true, card });
+  const progress = await getPlayerProgress(env, addr);
+  const loadout = await getCardLoadoutRecord(env, addr, tid, card?.element || seedCard.element);
+  return json({
+    success: true,
+    card: {
+      ...attachCardLoadout(card, loadout, card?.element || seedCard.element),
+      forge_shards: Number(progress?.forge_shards || 0),
+    },
+  });
 }
 
-async function handleQueue(request, env) {
+function handleEquipmentCatalog(cardClass) {
+  const normalized = normalizeCardClass(cardClass);
+  return json({
+    classKey: normalized,
+    starterLoadout: getStarterLoadout(normalized),
+    items: getEquipmentCatalogByClass(normalized),
+  });
+}
+
+async function handleEquipmentProgress(address, env) {
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const progress = await getPlayerProgress(env, addr);
+  const unlockedRows = await env.DB.prepare(
+    'SELECT class_key, equipment_id FROM equipment_unlocks WHERE address = ? ORDER BY class_key, equipment_id'
+  ).bind(addr).all();
+
+  const unlockedByClass = Object.fromEntries(
+    CARD_CLASSES.map((cardClass) => [cardClass, [...getStarterUnlockedIds(cardClass)]])
+  );
+
+  for (const row of unlockedRows.results || []) {
+    const classKey = normalizeCardClass(row.class_key);
+    if (!unlockedByClass[classKey].includes(row.equipment_id)) {
+      unlockedByClass[classKey].push(row.equipment_id);
+    }
+  }
+
+  return json({
+    progress: {
+      address: addr,
+      forgeShards: Number(progress?.forge_shards || 0),
+      unlockedByClass,
+    },
+  });
+}
+
+async function handleEquipmentUnlock(request, env) {
+  const { address, classKey, equipmentId } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  if (await hasActiveQueueLock(env, addr)) {
+    return json({ error: 'locked', message: 'Cannot change equipment while matchmaking is active' }, 409);
+  }
+
+  const item = getEquipmentById(equipmentId);
+  const normalizedClass = normalizeCardClass(classKey);
+  if (!item || item.classKey !== normalizedClass) {
+    return json({ error: 'invalid', message: 'Equipment does not match the requested class' }, 400);
+  }
+
+  const cardRow = await env.DB.prepare(
+    'SELECT element FROM game_cards WHERE address = ?'
+  ).bind(addr).first();
+  if (!cardRow || normalizeCardClass(cardRow.element) !== normalizedClass) {
+    return json({ error: 'invalid', message: 'Current card class does not match this equipment class' }, 400);
+  }
+
+  if (item.starter) {
+    const progress = await getPlayerProgress(env, addr);
+    const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
+    return json({
+      success: true,
+      equipmentId: item.id,
+      progress: buildEquipmentProgressPayload(addr, normalizedClass, progress, unlockedIds),
+    });
+  }
+
+  const progress = await getPlayerProgress(env, addr);
+  const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
+  if (unlockedIds.includes(item.id)) {
+    return json({
+      success: true,
+      equipmentId: item.id,
+      progress: buildEquipmentProgressPayload(addr, normalizedClass, progress, unlockedIds),
+    });
+  }
+
+  if (Number(progress?.forge_shards || 0) < item.cost) {
+    return json({ error: 'insufficient_forge_shards', message: 'Not enough Forge Shards' }, 400);
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO equipment_unlocks (address, class_key, equipment_id)
+       VALUES (?, ?, ?)
+       ON CONFLICT(address, equipment_id) DO NOTHING`
+    ).bind(addr, normalizedClass, item.id),
+    env.DB.prepare(
+      `UPDATE player_progress
+          SET forge_shards = forge_shards - ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE address = ?`
+    ).bind(item.cost, addr),
+  ]);
+
+  const updatedProgress = await getPlayerProgress(env, addr);
+  const updatedUnlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, normalizedClass);
+  return json({
+    success: true,
+    equipmentId: item.id,
+    progress: buildEquipmentProgressPayload(addr, normalizedClass, updatedProgress, updatedUnlockedIds),
+  });
+}
+
+async function handleEquipmentLoadoutGet(address, tokenId, env) {
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const cardRow = await env.DB.prepare(
+    'SELECT * FROM game_cards WHERE address = ? AND token_id = ?'
+  ).bind(addr, String(tokenId)).first();
+  if (!cardRow) return json({ error: 'not_found' }, 404);
+
+  await getPlayerProgress(env, addr);
+  const loadout = await getCardLoadoutRecord(env, addr, tokenId, cardRow.element);
+  return json({
+    loadout,
+    card: attachCardLoadout(cardRow, loadout, cardRow.element),
+  });
+}
+
+async function handleEquipmentLoadoutUpdate(request, env) {
+  const body = await request.json();
+  const { address, tokenId, powerItemId, defenseItemId, speedItemId } = body;
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  if (await hasActiveQueueLock(env, addr)) {
+    return json({ error: 'locked', message: 'Cannot change loadout while matchmaking is active' }, 409);
+  }
+
+  const cardRow = await env.DB.prepare(
+    'SELECT * FROM game_cards WHERE address = ? AND token_id = ?'
+  ).bind(addr, String(tokenId)).first();
+  if (!cardRow) return json({ error: 'not_found' }, 404);
+
+  const cardClass = normalizeCardClass(cardRow.element);
+  const requested = { powerItemId, defenseItemId, speedItemId };
+  const loadout = buildLoadoutView(requested, cardClass);
+  const unlockedIds = await getUnlockedEquipmentIdsForClass(env, addr, cardClass);
+
+  for (const item of loadout.items) {
+    if (!item || item.classKey !== cardClass) {
+      return json({ error: 'invalid', message: 'Loadout contains invalid equipment' }, 400);
+    }
+    if (!item.starter && !unlockedIds.includes(item.id)) {
+      return json({ error: 'locked', message: `Equipment ${item.name} is not unlocked` }, 400);
+    }
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO card_loadouts (address, token_id, power_item_id, defense_item_id, speed_item_id, updated_at)
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(address, token_id) DO UPDATE SET
+       power_item_id = excluded.power_item_id,
+       defense_item_id = excluded.defense_item_id,
+       speed_item_id = excluded.speed_item_id,
+       updated_at = CURRENT_TIMESTAMP`
+  ).bind(addr, String(tokenId), loadout.powerItemId, loadout.defenseItemId, loadout.speedItemId).run();
+
+  return json({
+    success: true,
+    loadout,
+    card: attachCardLoadout(cardRow, loadout, cardRow.element),
+  });
+}
+
+async function legacyHandleQueue(request, env) {
   const { address, card } = await request.json();
 
   if (!address || !isValidEthAddress(address)) {
@@ -508,7 +1723,7 @@ async function handleQueue(request, env) {
   return json({ status: 'waiting' });
 }
 
-async function handleQueueStatus(address, env) {
+async function legacyHandleQueueStatus(address, env) {
   // Check if a battle was resolved for this player recently
   const battle = await env.DB.prepare(
     "SELECT * FROM battles WHERE (player1 = ? OR player2 = ?) AND status = 'resolved' AND resolved_at > datetime('now', '-120 seconds') ORDER BY resolved_at DESC LIMIT 1"
@@ -556,6 +1771,158 @@ async function handleQueueStatus(address, env) {
   return json({ status: inQueue ? 'waiting' : 'idle' });
 }
 
+async function handleQueue(request, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupQueue(env);
+
+  const { address, card } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+  if (!card || !card.tokenId) {
+    return json({ error: 'invalid', message: 'Card is required for matchmaking' }, 400);
+  }
+
+  const addr     = address.toLowerCase();
+  const ticketId = crypto.randomUUID();
+  const cardRow  = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
+  const loadout  = await getCardLoadoutRecord(env, addr, card.tokenId, cardRow?.element || card.element);
+  const queuedCard = attachCardLoadout({ ...cardRow, ...card }, loadout, cardRow?.element || card.element);
+  const cardJson = JSON.stringify(queuedCard);
+  const profile  = computeMatchProfile(cardRow, queuedCard);
+
+  await env.DB.prepare(
+    `INSERT INTO battle_queue (
+       address, ticket_id, card_json, status, match_id, queued_at, matched_at, expires_at, updated_at, rating, bucket_key
+     ) VALUES (
+       ?, ?, ?, 'searching', NULL, CURRENT_TIMESTAMP, NULL, datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'), CURRENT_TIMESTAMP, ?, ?
+     )
+     ON CONFLICT(address) DO UPDATE SET
+       ticket_id  = excluded.ticket_id,
+       card_json  = excluded.card_json,
+       status     = 'searching',
+       match_id   = NULL,
+       queued_at  = CURRENT_TIMESTAMP,
+       matched_at = NULL,
+       expires_at = datetime('now', '+${QUEUE_TICKET_TTL_SECONDS} seconds'),
+       updated_at = CURRENT_TIMESTAMP,
+       rating     = excluded.rating,
+       bucket_key = excluded.bucket_key`
+  ).bind(addr, ticketId, cardJson, profile.rating, profile.bucketKey).run();
+
+  const matched = await attemptMatchForTicket(env, addr, ticketId);
+  if (matched) return json(matched);
+
+  return json({
+    status:    'waiting',
+    ticketId,
+    rating:    profile.rating,
+    bucketKey: profile.bucketKey,
+    tier:      profile.tier,
+  });
+}
+
+async function handleQueueStatus(address, ticketId, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupQueue(env);
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const queueRow = await loadQueueRow(env, addr, ticketId);
+
+  if (queueRow) {
+    if (queueRow.status === 'matched' && queueRow.match_id) {
+      const payload = await loadQueueBattlePayload(env, addr, queueRow);
+      if (payload) return json(payload);
+
+      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'assembling' });
+    }
+
+    if (queueRow.status === 'matching') {
+      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'matching' });
+    }
+
+    if (queueRow.status === 'searching') {
+      const matched = await attemptMatchForTicket(env, addr, queueRow.ticket_id);
+      if (matched) return json(matched);
+
+      return json({
+        status:    'waiting',
+        ticketId:  queueRow.ticket_id,
+        rating:    queueRow.rating,
+        bucketKey: queueRow.bucket_key,
+        tier:      competitiveTierFromRating(queueRow.rating),
+      });
+    }
+  }
+
+  const battle = await findBattleByTicket(env, ticketId);
+  if (battle) {
+    const myCard = await env.DB.prepare(
+      'SELECT * FROM game_cards WHERE address = ?'
+    ).bind(addr).first();
+
+    return json(buildResolvedBattlePayload(battle, addr, myCard));
+  }
+
+  return json({ status: ticketId ? 'superseded' : 'idle', ticketId: ticketId || null });
+}
+
+async function handleQueueCancel(request, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupQueue(env);
+
+  const { address, ticketId } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const queueRow = await loadQueueRow(env, addr, ticketId || null);
+
+  if (!queueRow) {
+    const battle = await findBattleByTicket(env, ticketId || null);
+    if (battle) {
+      const myCard = await env.DB.prepare(
+        'SELECT * FROM game_cards WHERE address = ?'
+      ).bind(addr).first();
+
+      return json(buildResolvedBattlePayload(battle, addr, myCard));
+    }
+
+    return json({ status: ticketId ? 'superseded' : 'idle', ticketId: ticketId || null });
+  }
+
+  if (ticketId && queueRow.ticket_id !== ticketId) {
+    return json({ status: 'superseded', ticketId });
+  }
+
+  if (queueRow.status === 'matched' && queueRow.match_id) {
+    const payload = await loadQueueBattlePayload(env, addr, queueRow);
+    if (payload) return json(payload);
+    return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'assembling' });
+  }
+
+  if (queueRow.status === 'matching') {
+    return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'matching' });
+  }
+
+  const deleted = await env.DB.prepare(
+    "DELETE FROM battle_queue WHERE address = ? AND ticket_id = ? AND status = 'searching'"
+  ).bind(addr, queueRow.ticket_id).run();
+
+  const removed = Number(deleted.meta?.changes || deleted.meta?.rows_written || 0) > 0;
+  return json({
+    status: removed ? 'cancelled' : 'waiting',
+    ticketId: queueRow.ticket_id,
+  });
+}
+
 async function handleProfileUpsert(request, env) {
   const body = await request.json();
   const { address, displayName, bio, avatarUrl } = body;
@@ -588,3 +1955,17 @@ async function handleProfileUpsert(request, env) {
   ).bind(addr).first();
   return json({ success: true, profile });
 }
+import {
+  CARD_CLASSES,
+  buildEquipmentCardView,
+  buildLoadoutView,
+  calcXP as calcEquipmentXp,
+  getEquipmentById,
+  getEquipmentCatalogByClass,
+  getForgeShardReward,
+  getStarterLoadout,
+  getStarterUnlockedIds,
+  isStarterEquipment,
+  normalizeCardClass,
+  resolveBattle as resolveEquipmentBattle,
+} from '../src/game/equipment-system.js';

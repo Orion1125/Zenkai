@@ -48,11 +48,13 @@ export async function renderLeaderboard(app) {
       const short = addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '???';
       const wins = e.wins ?? e.w ?? 0;
       const losses = e.losses ?? e.l ?? 0;
+      const rating = e.competitive_rating ?? 1500;
+      const tier = e.competitive_tier || 'Gold';
       const highlight = addr.toLowerCase() === address.toLowerCase() ? ' lb-you' : '';
       return `
         <div class="lb-row${highlight}">
           <span class="lb-rank">${medal}</span>
-          <span class="lb-addr">${esc(short)}</span>
+          <span class="lb-addr">${esc(short)} • ${esc(tier)} ${esc(rating)}</span>
           <span class="lb-record">${wins}W / ${losses}L</span>
         </div>
       `;

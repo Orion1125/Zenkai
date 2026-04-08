@@ -822,7 +822,7 @@ a.zk-card-id {
 /* Nav grid */
 .home-nav {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1222,6 +1222,45 @@ a.zk-card-id {
 .round-lose { border-left-color: var(--red);  }
 .round-draw { border-left-color: var(--text-dim); }
 
+.battle-round-v2 {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.battle-round-head,
+.battle-round-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.56rem;
+  color: var(--text-dim);
+}
+
+.battle-round-title {
+  font-family: var(--font-display);
+  letter-spacing: 2px;
+  color: var(--text);
+}
+
+.battle-round-state {
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.battle-round-line,
+.battle-round-note {
+  font-size: 0.62rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.battle-round-line {
+  color: var(--text);
+}
+
 .round-label {
   font-family: var(--font-display);
   font-size: 0.62rem;
@@ -1282,6 +1321,26 @@ a.zk-card-id {
   gap: 6px;
   padding: 4px 8px;
   flex-wrap: wrap;
+}
+
+.zk-equipment-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px 6px;
+}
+
+.zk-equipment-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,208,0,0.18);
+  background: rgba(255,208,0,0.06);
+  color: var(--text-muted);
+  font-size: 0.46rem;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
 }
 
 .zk-element-badge {
@@ -1680,4 +1739,147 @@ a.zk-card-id {
 
 .profile-nav .btn-ghost {
   flex: 1;
+}
+
+.equipment-wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.equipment-overview {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.equipment-card-preview {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+}
+
+.equipment-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+}
+
+.equipment-summary-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.equipment-summary-label {
+  font-size: 0.58rem;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.equipment-summary-value {
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.equipment-summary-list {
+  color: var(--gold);
+}
+
+.equipment-slot-block {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.equipment-slot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.equipment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.equipment-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+}
+
+.equipment-item.equipped {
+  border-color: rgba(255,208,0,0.32);
+  background: rgba(255,208,0,0.05);
+}
+
+.equipment-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.equipment-item-code {
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 2px;
+}
+
+.equipment-item-name {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 0.86rem;
+  letter-spacing: 1px;
+  text-align: right;
+}
+
+.equipment-item-effects {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.equipment-effect-line {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.equipment-action {
+  width: 100% !important;
+}
+
+@media (max-width: 900px) {
+  .equipment-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .equipment-grid {
+    grid-template-columns: 1fr;
+  }
 }

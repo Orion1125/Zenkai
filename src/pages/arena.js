@@ -5,8 +5,9 @@
 import { navigate }              from '../router.js';
 import { buildCardHTML, buildCardBack, deriveStats } from './card.js';
 import { playBattleHit, playVictory, playDefeat }   from '../sound.js';
-import { syncCard, enterQueue, pollQueue }           from '../api.js';
+import { syncCard, enterQueue, pollQueue, cancelQueue } from '../api.js';
 import { resolveBattle, calcXP, NPC_OPPONENTS }      from '../traits.js';
+import { buildEquipmentCardView, getForgeShardReward, getStarterLoadout } from '../game/equipment-system.js';
 
 const HAS_SERVER = !!import.meta.env.VITE_API_URL;
 
@@ -76,20 +77,20 @@ export function renderArena(app) {
 
   wrap.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
 
-  const wins   = parseInt(localStorage.getItem('zenkai_wins') || '0');
-  const losses = parseInt(localStorage.getItem('zenkai_losses') || '0');
+  const wins   = Number(myCard.wins ?? localStorage.getItem('zenkai_wins') ?? 0);
+  const losses = Number(myCard.losses ?? localStorage.getItem('zenkai_losses') ?? 0);
   wrap.querySelector('#arena-record').innerHTML =
     `<span class="record-label">RECORD</span>
      <span class="record-wins">${wins}W</span>
      <span class="record-sep">/</span>
      <span class="record-losses">${losses}L</span>`;
 
-  wrap.querySelector('#btn-battle').addEventListener('click', () => startBattle(wrap, myCard, address));
+  wrap.querySelector('#btn-battle').onclick = () => startBattle(wrap, myCard, address);
 }
 
 // ── Battle sequence ──────────────────────────────────────────────────────────
 async function startBattle(wrap, myCard, address) {
-  if (HAS_SERVER) return startBattleServer(wrap, myCard, address);
+  if (HAS_SERVER) return startBattleServerV2(wrap, myCard, address);
   return startBattleLocal(wrap, myCard, address);
 }
 
@@ -106,6 +107,7 @@ async function startBattleServer(wrap, myCard, address) {
   await syncCard(address, myCard);
 
   let result = await enterQueue(address, myCard);
+  let ticketId = result.ticketId || null;
 
   if (result.status === 'waiting') {
     let tries = 0;
@@ -113,7 +115,8 @@ async function startBattleServer(wrap, myCard, address) {
       await wait(2000);
       tries++;
       btn.textContent = `SEARCHING… ${tries * 2}s`;
-      result = await pollQueue(address);
+      result = await pollQueue(address, ticketId);
+      ticketId = result.ticketId || ticketId;
     }
   }
 
@@ -140,12 +143,16 @@ async function startBattleServer(wrap, myCard, address) {
 
   const won  = result.winner === 'p1';
   const draw = result.winner === 'draw';
+  const previousForgeShards = parseInt(localStorage.getItem('zenkai_forge_shards') || String(myCard.forge_shards || 0), 10) || 0;
 
   if (won) playVictory(); else if (!draw) playDefeat();
 
   if (result.card) {
     myCard.level = result.card.level;
     myCard.xp    = result.card.xp;
+    myCard.competitive_rating = result.card.competitive_rating;
+    myCard.competitive_tier = result.card.competitive_tier;
+    myCard.competitive_matches = result.card.competitive_matches;
     localStorage.setItem('zenkai_card', JSON.stringify(myCard));
   }
 
@@ -162,6 +169,138 @@ async function startBattleServer(wrap, myCard, address) {
   btn.onclick = () => { log.innerHTML = ''; startBattle(wrap, myCard, address); };
 }
 
+async function startBattleServerV2(wrap, myCard, address) {
+  const btn     = wrap.querySelector('#btn-battle');
+  const log     = wrap.querySelector('#battle-log');
+  const slotOpp = wrap.querySelector('#slot-opponent');
+  const slotMe  = wrap.querySelector('#slot-player');
+  const resetBattleButton = (label = 'FIND BATTLE') => {
+    btn.disabled = false;
+    btn.textContent = label;
+    btn.onclick = () => startBattle(wrap, myCard, address);
+  };
+  const search = { cancelled: false, cancelResult: null, ticketId: null };
+
+  btn.disabled    = true;
+  btn.textContent = 'ENTERING QUEUEâ€¦';
+  log.innerHTML   = '';
+  wrap._searchSession = search;
+
+  await syncCard(address, myCard);
+
+  let result = await enterQueue(address, myCard);
+  let ticketId = result.ticketId || null;
+  search.ticketId = ticketId;
+
+  if (result.status === 'waiting') {
+    btn.disabled = false;
+    btn.textContent = 'CANCEL SEARCH';
+    btn.onclick = async () => {
+      if (search.cancelled) return;
+      search.cancelled = true;
+      btn.disabled = true;
+      btn.textContent = 'CANCELLINGâ€¦';
+      try {
+        search.cancelResult = await cancelQueue(address, search.ticketId);
+      } catch {
+        search.cancelResult = { status: 'cancelled', ticketId: search.ticketId };
+      }
+    };
+
+    let tries = 0;
+    while (result.status === 'waiting' && tries < 45 && !search.cancelled) {
+      await wait(2000);
+      tries++;
+      btn.textContent = `CANCEL SEARCH â€¢ ${tries * 2}s`;
+      result = await pollQueue(address, ticketId);
+      ticketId = result.ticketId || ticketId;
+      search.ticketId = ticketId;
+    }
+  }
+
+  if (search.cancelled) {
+    const cancelResult = search.cancelResult || { status: 'cancelled', ticketId };
+
+    if (cancelResult.status === 'matched') {
+      result = cancelResult;
+    } else if (cancelResult.status === 'waiting' && cancelResult.phase) {
+      btn.disabled = true;
+      btn.textContent = 'FINALIZING MATCHâ€¦';
+      result = cancelResult;
+
+      let gracePolls = 0;
+      while (result.status === 'waiting' && gracePolls < 10) {
+        await wait(1000);
+        gracePolls++;
+        result = await pollQueue(address, ticketId);
+        ticketId = result.ticketId || ticketId;
+      }
+    } else {
+      wrap._searchSession = null;
+      resetBattleButton();
+      const msg = document.createElement('div');
+      msg.className = 'battle-round round-draw';
+      msg.textContent = 'Search cancelled.';
+      log.appendChild(msg);
+      return;
+    }
+  }
+
+  if (result.status !== 'matched') {
+    wrap._searchSession = null;
+    if (ticketId) {
+      try { await cancelQueue(address, ticketId); } catch {}
+    }
+    resetBattleButton();
+    const msg = document.createElement('div');
+    msg.className = 'battle-round round-draw';
+    msg.textContent = 'No opponent found. Try again.';
+    log.appendChild(msg);
+    return;
+  }
+
+  const opp = { ...result.opponent.card, level: result.opponent.card?.level || 1, xp: result.opponent.card?.xp || 0 };
+  btn.disabled = true;
+  btn.textContent = 'OPPONENT FOUND!';
+  slotOpp.innerHTML = `<div class="arena-slot-label">OPPONENT</div>${buildCardHTML(opp)}`;
+  slotOpp.querySelector('.zk-card').classList.add('zk-reveal-anim');
+
+  await wait(1000);
+  await animateRounds(log, slotMe, slotOpp, result.rounds);
+  await wait(800);
+
+  const won  = result.winner === 'p1';
+  const draw = result.winner === 'draw';
+
+  if (won) playVictory(); else if (!draw) playDefeat();
+
+  if (result.card) {
+    myCard.level = result.card.level;
+    myCard.xp    = result.card.xp;
+    myCard.equipmentLoadout = result.card.equipmentLoadout || myCard.equipmentLoadout;
+    myCard.forge_shards = result.card.forge_shards ?? myCard.forge_shards;
+    myCard.competitive_rating = result.card.competitive_rating ?? myCard.competitive_rating;
+    myCard.competitive_tier = result.card.competitive_tier ?? myCard.competitive_tier;
+    myCard.competitive_matches = result.card.competitive_matches ?? myCard.competitive_matches;
+    if (result.card.forge_shards != null) {
+      localStorage.setItem('zenkai_forge_shards', String(result.card.forge_shards));
+    }
+    localStorage.setItem('zenkai_card', JSON.stringify(myCard));
+  }
+
+  const totalWins   = result.card?.wins   ?? parseInt(localStorage.getItem('zenkai_wins')   || '0');
+  const totalLosses = result.card?.losses ?? parseInt(localStorage.getItem('zenkai_losses') || '0');
+  localStorage.setItem('zenkai_wins', String(totalWins));
+  localStorage.setItem('zenkai_losses', String(totalLosses));
+
+  showFinalResult(log, won, draw, myCard, opp, undefined, result.card?.forge_shards != null ? (result.card.forge_shards - previousForgeShards) : undefined);
+  updateRecordDisplay(wrap, totalWins, totalLosses);
+
+  slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
+  wrap._searchSession = null;
+  resetBattleButton('BATTLE AGAIN');
+}
+
 async function startBattleLocal(wrap, myCard, address) {
   const btn     = wrap.querySelector('#btn-battle');
   const log     = wrap.querySelector('#battle-log');
@@ -174,8 +313,10 @@ async function startBattleLocal(wrap, myCard, address) {
 
   await wait(1200);
 
-  const opp      = pickOpponent(myCard.tokenId);
+  const rawOpp   = pickOpponent(myCard.tokenId);
+  const opp      = buildEquipmentCardView(rawOpp, getStarterLoadout(rawOpp.element), rawOpp.element);
   const myStats  = deriveStats(myCard.tokenId, myCard.attributes);
+  const myBattleCard = buildEquipmentCardView({ ...myCard, ...myStats, level: myCard.level || 1, ability: myStats.ability, rarity: myStats.rarity, element: myStats.element }, myCard.equipmentLoadout, myStats.element);
   const oppStats = { ...opp };
 
   // Reveal opponent
@@ -188,9 +329,7 @@ async function startBattleLocal(wrap, myCard, address) {
   btn.textContent = 'BATTLE!';
 
   // Resolve battle using trait engine
-  const p1 = { ...myStats, level: myCard.level || 1 };
-  const p2 = { ...oppStats, level: opp.level || 1 };
-  const result = resolveBattle(p1, p2);
+  const result = resolveBattle(myBattleCard, oppStats);
 
   await animateRounds(log, slotMe, slotOpp, result.rounds);
 
@@ -217,7 +356,11 @@ async function startBattleLocal(wrap, myCard, address) {
     localStorage.setItem('zenkai_losses', String(parseInt(localStorage.getItem('zenkai_losses') || '0') + 1));
   }
 
-  showFinalResult(log, won, draw, myCard, opp, xpEarned);
+  const forgeReward = getForgeShardReward(won ? 'win' : draw ? 'draw' : 'loss', 1500, 1500);
+  myCard.forge_shards = (parseInt(localStorage.getItem('zenkai_forge_shards') || String(myCard.forge_shards || 0), 10) || 0) + forgeReward;
+  localStorage.setItem('zenkai_forge_shards', String(myCard.forge_shards));
+  localStorage.setItem('zenkai_card', JSON.stringify(myCard));
+  showFinalResult(log, won, draw, myCard, opp, xpEarned, forgeReward);
 
   const wins   = parseInt(localStorage.getItem('zenkai_wins') || '0');
   const losses = parseInt(localStorage.getItem('zenkai_losses') || '0');
@@ -232,7 +375,7 @@ async function startBattleLocal(wrap, myCard, address) {
 
 // ── Shared battle animation ─────────────────────────────────────────────────
 
-async function animateRounds(log, slotMe, slotOpp, rounds) {
+async function animateRoundsLegacy(log, slotMe, slotOpp, rounds) {
   const meCard  = slotMe.querySelector('.zk-card');
   const oppCard = slotOpp.querySelector('.zk-card');
 
@@ -261,7 +404,7 @@ async function animateRounds(log, slotMe, slotOpp, rounds) {
   }
 }
 
-function showFinalResult(log, won, draw, myCard, opp, xpEarned) {
+function showFinalResultLegacy(log, won, draw, myCard, opp, xpEarned) {
   const xp = xpEarned ?? (won ? 50 : draw ? 0 : 10);
   const resultEl = document.createElement('div');
   resultEl.className = `battle-final ${won ? 'final-win' : draw ? 'final-draw' : 'final-lose'}`;
@@ -270,6 +413,72 @@ function showFinalResult(log, won, draw, myCard, opp, xpEarned) {
     : draw
     ? `<span class="final-text">DRAW</span><span class="final-xp">+${xp} XP</span>`
     : `<span class="final-text">DEFEAT</span><span class="final-xp">+${xp} XP</span>`;
+  log.appendChild(resultEl);
+}
+
+async function animateRounds(log, slotMe, slotOpp, rounds) {
+  const meCard  = slotMe.querySelector('.zk-card');
+  const oppCard = slotOpp.querySelector('.zk-card');
+
+  for (const round of rounds) {
+    await wait(700);
+
+    for (const action of round.actions || []) {
+      playBattleHit();
+      const actorCard = action.actor === 'p1' ? meCard : oppCard;
+      const defenderCard = action.actor === 'p1' ? oppCard : meCard;
+      actorCard.classList.add('card-hit-win');
+      defenderCard.classList.add('card-hit-lose');
+      setTimeout(() => {
+        actorCard.classList.remove('card-hit-win');
+        defenderCard.classList.remove('card-hit-lose');
+      }, 450);
+      await wait(180);
+    }
+
+    const actionLines = (round.actions || []).map((action) => {
+      const actor = action.actor === 'p1' ? 'YOU' : 'OPP';
+      const target = action.target === 'p1' ? 'YOU' : 'OPP';
+      const notes = (action.notes || []).length ? ` • ${(action.notes || []).join(', ')}` : '';
+      return `<div class="battle-round-line">${actor} → ${target} ${action.damage} dmg${action.heal ? ` • +${action.heal} heal` : ''}${notes}</div>`;
+    }).join('');
+    const startNotes = [...(round.start?.p1 || []), ...(round.start?.p2 || [])]
+      .map((note) => `<div class="battle-round-note">${esc(note)}</div>`)
+      .join('');
+    const endNotes = (round.endNotes || [])
+      .map((note) => `<div class="battle-round-note">${esc(note)}</div>`)
+      .join('');
+    const stateClass = round.leader === 'p1' ? 'round-win' : round.leader === 'p2' ? 'round-lose' : 'round-draw';
+
+    const roundEl = document.createElement('div');
+    roundEl.className = `battle-round battle-round-v2 ${stateClass}`;
+    roundEl.innerHTML = `
+      <div class="battle-round-head">
+        <span class="battle-round-title">ROUND ${round.round}</span>
+        <span class="battle-round-state">${round.leader === 'p1' ? 'YOU LEAD' : round.leader === 'p2' ? 'OPP LEADS' : 'DEAD EVEN'}</span>
+      </div>
+      ${startNotes}
+      ${actionLines}
+      ${endNotes}
+      <div class="battle-round-foot">
+        <span>YOU ${round.end?.p1?.hp || 0}/${round.end?.p1?.hpMax || 0} HP${round.end?.p1?.shield ? ` • SH ${round.end.p1.shield}` : ''}</span>
+        <span>OPP ${round.end?.p2?.hp || 0}/${round.end?.p2?.hpMax || 0} HP${round.end?.p2?.shield ? ` • SH ${round.end.p2.shield}` : ''}</span>
+      </div>
+    `;
+    log.appendChild(roundEl);
+  }
+}
+
+function showFinalResult(log, won, draw, myCard, opp, xpEarned, forgeEarned) {
+  const xp = xpEarned ?? (won ? 50 : draw ? 0 : 10);
+  const shardText = forgeEarned != null ? ` • +${forgeEarned} FS` : '';
+  const resultEl = document.createElement('div');
+  resultEl.className = `battle-final ${won ? 'final-win' : draw ? 'final-draw' : 'final-lose'}`;
+  resultEl.innerHTML = won
+    ? `<span class="final-text">VICTORY</span><span class="final-xp">+${xp} XP${shardText}</span>`
+    : draw
+    ? `<span class="final-text">DRAW</span><span class="final-xp">+${xp} XP${shardText}</span>`
+    : `<span class="final-text">DEFEAT</span><span class="final-xp">+${xp} XP${shardText}</span>`;
   log.appendChild(resultEl);
 }
 

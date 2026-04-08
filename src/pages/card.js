@@ -6,6 +6,7 @@ import { navigate } from '../router.js';
 import { playCardReveal } from '../sound.js';
 import { signOwnership } from '../wallet.js';
 import { mapTraitsToCard, deriveStatsFromHash, ELEMENT_COLORS } from '../traits.js';
+import { syncCard } from '../api.js';
 
 const NFT_CONTRACT = (import.meta.env.VITE_NFT_CONTRACT || '').toLowerCase();
 
@@ -77,7 +78,8 @@ async function fetchNFTs(address) {
 
 // ── Build card HTML ─────────────────────────────────────────────────────────
 export function buildCardHTML(card) {
-  const stats  = deriveStats(card.tokenId, card.attributes);
+  const tokenId = card.tokenId || card.token_id;
+  const stats  = deriveStats(tokenId, card.attributes);
   const level  = card.level  || 1;
   const xp     = card.xp     || 0;
   const xpNext = level * 100;
@@ -95,12 +97,16 @@ export function buildCardHTML(card) {
   const abilityTag = stats.ability
     ? `<span class="zk-ability-tag" title="${esc(stats.abilityDesc)}">${esc(stats.ability)}</span>`
     : '';
+  const equipmentChips = (card.equipmentLoadout?.items || [])
+    .filter(Boolean)
+    .map((item) => `<span class="zk-equipment-chip">${esc(item.name)}</span>`)
+    .join('');
 
   return `
-    <div class="zk-card ${stats.rarity === 'LEGENDARY' ? 'zk-legendary' : stats.rarity === 'EPIC' ? 'zk-epic' : ''}" data-token="${esc(String(card.tokenId))}" data-element="${esc(stats.element)}">
+    <div class="zk-card ${stats.rarity === 'LEGENDARY' ? 'zk-legendary' : stats.rarity === 'EPIC' ? 'zk-epic' : ''}" data-token="${esc(String(tokenId))}" data-element="${esc(stats.element)}">
       <div class="zk-card-shine"></div>
       <div class="zk-card-header">
-        <a class="zk-card-id" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${card.tokenId}" target="_blank" rel="noopener">ZKN #${esc(String(card.tokenId).padStart(4, '0'))}</a>
+        <a class="zk-card-id" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${tokenId}" target="_blank" rel="noopener">ZKN #${esc(String(tokenId).padStart(4, '0'))}</a>
         <span class="zk-card-rarity" style="color:${rColor}">${esc(stats.rarity)}</span>
       </div>
       <div class="zk-card-art-wrap">
@@ -111,8 +117,9 @@ export function buildCardHTML(card) {
         <div class="zk-card-art-overlay"></div>
       </div>
       <div class="zk-card-body">
-        <a class="zk-card-name" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${card.tokenId}" target="_blank" rel="noopener">${esc(card.name)}</a>
+        <a class="zk-card-name" href="https://opensea.io/assets/ethereum/${NFT_CONTRACT}/${tokenId}" target="_blank" rel="noopener">${esc(card.name)}</a>
         <div class="zk-card-meta">${elemBadge}${abilityTag}</div>
+        ${equipmentChips ? `<div class="zk-equipment-row">${equipmentChips}</div>` : ''}
         <div class="zk-stats">
           <div class="zk-stat pwr">
             <span class="zk-stat-label">PWR</span>
@@ -279,7 +286,8 @@ async function showScanningPhase(content, address) {
   await delay(1000);
 
   if (nfts.length === 1) {
-    showReveal(content, { ...nfts[0], owner: address }, address);
+    const hydrated = await hydratePersistedCard(address, { ...nfts[0], owner: address });
+    showReveal(content, hydrated, address);
     return;
   }
 
@@ -306,12 +314,40 @@ async function showScanningPhase(content, address) {
     const label = document.createElement('span');
     label.textContent = `#${nft.tokenId}`;
     item.appendChild(label);
-    item.addEventListener('click', () => showReveal(content, { ...nft, owner: address }, address));
+    item.addEventListener('click', async () => {
+      const hydrated = await hydratePersistedCard(address, { ...nft, owner: address });
+      showReveal(content, hydrated, address);
+    });
     grid.appendChild(item);
   });
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function hydratePersistedCard(address, card) {
+  const localCard = { ...card, owner: address, attributes: card.attributes || [] };
+  const synced = await syncCard(address, localCard);
+  const merged = synced
+    ? {
+      ...localCard,
+      ...synced,
+      tokenId: synced.tokenId || synced.token_id || localCard.tokenId,
+      token_id: synced.token_id || localCard.tokenId,
+      attributes: localCard.attributes || [],
+      owner: address,
+      forge_shards: synced.forge_shards ?? localCard.forge_shards ?? 0,
+      wins: synced.wins ?? localCard.wins ?? 0,
+      losses: synced.losses ?? localCard.losses ?? 0,
+      equipmentLoadout: synced.equipmentLoadout || localCard.equipmentLoadout,
+    }
+    : localCard;
+
+  localStorage.setItem('zenkai_card', JSON.stringify(merged));
+  localStorage.setItem('zenkai_forge_shards', String(merged.forge_shards || 0));
+  localStorage.setItem('zenkai_wins', String(merged.wins || 0));
+  localStorage.setItem('zenkai_losses', String(merged.losses || 0));
+  return merged;
+}
 
 // ── Element glyphs for reveal ────────────────────────────────────────────────
 const ELEMENT_GLYPHS = {
@@ -325,7 +361,16 @@ const ELEMENT_GLYPHS = {
 
 // ── Card reveal sequence ────────────────────────────────────────────────────
 function showReveal(container, card, address, isDemo = false) {
-  const cardData = { ...card, level: card.level || 1, xp: card.xp || 0, owner: address, attributes: card.attributes || [] };
+  const cardData = {
+    ...card,
+    tokenId: card.tokenId || card.token_id,
+    level: card.level || 1,
+    xp: card.xp || 0,
+    wins: card.wins || 0,
+    losses: card.losses || 0,
+    owner: address,
+    attributes: card.attributes || [],
+  };
   localStorage.setItem('zenkai_card', JSON.stringify(cardData));
 
   const stats = deriveStats(cardData.tokenId, cardData.attributes);

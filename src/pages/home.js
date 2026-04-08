@@ -21,6 +21,7 @@ export function renderHome(app) {
   const stats = card.level ? card : { level: 1, xp: 0 };
   const xpNext = (stats.level || 1) * 100;
   const xpPct = Math.min(100, Math.round(((stats.xp || 0) / xpNext) * 100));
+  const forgeShards = parseInt(localStorage.getItem('zenkai_forge_shards') || String(card.forge_shards || 0), 10) || 0;
 
   const el = document.createElement('div');
   el.className = 'home-page';
@@ -54,12 +55,12 @@ export function renderHome(app) {
             <span class="home-qstat-label">XP</span>
           </div>
           <div class="home-qstat">
-            <span class="home-qstat-val">0W</span>
+            <span class="home-qstat-val">${card.wins || 0}W</span>
             <span class="home-qstat-label">WINS</span>
           </div>
           <div class="home-qstat">
-            <span class="home-qstat-val">--</span>
-            <span class="home-qstat-label">STREAK</span>
+            <span class="home-qstat-val">${forgeShards}</span>
+            <span class="home-qstat-label">SHARDS</span>
           </div>
         </div>
 
@@ -90,10 +91,10 @@ export function renderHome(app) {
             <span class="home-nav-label">PROFILE</span>
             <span class="home-nav-desc">Stats & settings</span>
           </button>
-          <button class="home-nav-btn" data-route="/card">
+          <button class="home-nav-btn" data-route="/equipment">
             <div class="home-nav-icon">🃏</div>
             <span class="home-nav-label">INVENTORY</span>
-            <span class="home-nav-desc">Change warrior</span>
+            <span class="home-nav-desc">Build your loadout</span>
           </button>
           <button class="home-nav-btn" data-route="/leaderboard">
             <div class="home-nav-icon">🏆</div>
