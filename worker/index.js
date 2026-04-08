@@ -578,6 +578,8 @@ function buildResolvedBattlePayload(battle, address, myCard) {
     status:   'matched',
     ticketId: isP1 ? battle.p1_ticket_id : battle.p2_ticket_id,
     battleId: battle.id,
+    countdown: 5,
+    battleDuration: rounds.length > 0 ? rounds[rounds.length - 1].round : 0,
     rounds,
     winner,
     won,
@@ -1968,16 +1970,20 @@ async function handleQueueStatus(address, ticketId, env) {
       const payload = await loadQueueBattlePayload(env, addr, queueRow);
       if (payload) return json(payload);
 
-      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'assembling' });
+      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'assembling', countdown: 5 });
     }
 
     if (queueRow.status === 'matching') {
-      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'matching' });
+      return json({ status: 'waiting', ticketId: queueRow.ticket_id, phase: 'matching', countdown: 5 });
     }
 
     if (queueRow.status === 'searching') {
       const matched = await attemptMatchForTicket(env, addr, queueRow.ticket_id);
-      if (matched) return json(matched);
+      if (matched) return json({ ...matched, countdown: 5 });
+
+      // Calculate seconds elapsed since queue entry for client timer display
+      const queuedAt = queueRow.queued_at ? new Date(queueRow.queued_at + 'Z').getTime() : Date.now();
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - queuedAt) / 1000));
 
       return json({
         status:    'waiting',
@@ -1985,6 +1991,7 @@ async function handleQueueStatus(address, ticketId, env) {
         rating:    queueRow.rating,
         bucketKey: queueRow.bucket_key,
         tier:      competitiveTierFromRating(queueRow.rating),
+        matchTimer: elapsedSeconds,
       });
     }
   }

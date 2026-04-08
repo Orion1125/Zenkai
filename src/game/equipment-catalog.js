@@ -25,13 +25,24 @@ export const PRICE_BY_LEVEL = {
 const POSITIVE_SCALE = [0, 1.0, 1.08, 1.16, 1.24, 1.32, 1.42, 1.52, 1.63, 1.74, 1.85];
 const NEGATIVE_SCALE = [0, 1.0, 0.96, 0.92, 0.88, 0.84, 0.78, 0.72, 0.66, 0.6, 0.55];
 
+// Each class has unique stat skews applied to base card stats in combat.
+// These ensure same-equipment, same-level cards of different classes diverge.
+export const CLASS_STAT_SKEW = {
+  FIRE:   { pwr: 1.06, spd: 1.00, hp: 0.96 },  // glass cannon
+  WATER:  { pwr: 0.97, spd: 0.98, hp: 1.06 },  // sustain tank
+  EARTH:  { pwr: 0.98, spd: 0.94, hp: 1.10 },  // slow wall
+  WIND:   { pwr: 0.96, spd: 1.08, hp: 0.97 },  // fast striker
+  SHADOW: { pwr: 1.03, spd: 1.04, hp: 0.95 },  // burst assassin
+  VOID:   { pwr: 1.00, spd: 1.00, hp: 1.00 },  // neutral baseline
+};
+
 const CLASS_PASSIVES = {
-  FIRE: { critBurn: 1 },
-  WATER: { extraRegen: 1, chillOnCycleHit: 1 },
-  EARTH: { startShield: 2, statusResist: 0.08 },
-  WIND: { tempoGain: 4, dodge: 0.01 },
-  SHADOW: { lifesteal: 0.03, bleedReflect: 1 },
-  VOID: { trueDamageEveryThirdHit: 3, fluxDuration: 5 },
+  FIRE:   { critBurn: 1, igniteDot: 2, critBonus: 0.06 },
+  WATER:  { extraRegen: 1, chillOnCycleHit: 1, healBonus: 0.15 },
+  EARTH:  { startShield: 2, statusResist: 0.12, thornArmor: 1 },
+  WIND:   { tempoGain: 4, dodge: 0.02, counterStrike: 2 },
+  SHADOW: { lifesteal: 0.04, bleedReflect: 1, assassinate: 0.06 },
+  VOID:   { trueDamageEveryThirdHit: 4, fluxDuration: 5, voidRift: 2 },
 };
 
 const POWER_TEMPLATES = [
@@ -137,15 +148,22 @@ function buildEffects(slot, levelConfig, classKey) {
 
   const passive = CLASS_PASSIVES[classKey];
   if (passive.critBurn && slot === 'power') effects.push('Class: crits apply Burn');
+  if (passive.critBonus && slot === 'power') effects.push(`Class: +${Math.round(passive.critBonus * 100)}% base crit chance`);
+  if (passive.igniteDot && slot === 'power') effects.push(`Class: burn ticks deal +${passive.igniteDot} bonus`);
   if (passive.extraRegen && slot === 'hp') effects.push(`Class: +${passive.extraRegen} bonus regen`);
+  if (passive.healBonus && slot === 'hp') effects.push(`Class: +${Math.round(passive.healBonus * 100)}% healing effectiveness`);
   if (passive.chillOnCycleHit && slot === 'power') effects.push('Class: first cycle hit applies Chill');
   if (passive.startShield && slot === 'hp') effects.push(`Class: +${passive.startShield} starting shield`);
   if (passive.statusResist && slot === 'hp') effects.push(`Class: ${Math.round(passive.statusResist * 100)}% status resistance`);
+  if (passive.thornArmor && slot === 'hp') effects.push(`Class: reflect ${passive.thornArmor} damage on every hit taken`);
   if (passive.tempoGain && slot === 'speed') effects.push(`Class: +${passive.tempoGain} tempo per cycle`);
   if (passive.dodge && slot === 'speed') effects.push(`Class: +${Math.round(passive.dodge * 100)}% dodge`);
+  if (passive.counterStrike && slot === 'speed') effects.push(`Class: +${passive.counterStrike} damage on dodge counter`);
   if (passive.lifesteal && slot === 'power') effects.push(`Class: +${Math.round(passive.lifesteal * 100)}% lifesteal`);
+  if (passive.assassinate && slot === 'power') effects.push(`Class: +${Math.round(passive.assassinate * 100)}% damage vs targets below 50% HP`);
   if (passive.bleedReflect && slot === 'hp') effects.push('Class: first hit taken inflicts Bleed');
   if (passive.trueDamageEveryThirdHit && slot === 'power') effects.push(`Class: every third hit +${passive.trueDamageEveryThirdHit} true damage`);
+  if (passive.voidRift && slot === 'speed') effects.push(`Class: every 4th attack drains ${passive.voidRift} enemy tempo`);
   if (passive.fluxDuration && slot === 'speed') effects.push(`Class: invert one debuff for ${passive.fluxDuration}s once per fight`);
   return effects;
 }

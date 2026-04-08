@@ -1,5 +1,6 @@
-import { buildLoadoutView, normalizeCardClass } from './equipment-catalog.js';
+import { buildLoadoutView, normalizeCardClass, CLASS_STAT_SKEW } from './equipment-catalog.js';
 
+const COUNTDOWN_SECONDS = 5;
 const SIM_CAP_SECONDS = 180;
 const CYCLE_SECONDS = 5;
 
@@ -46,11 +47,13 @@ export function deriveCombatStats(card, loadout, trackLevels) {
     base.hp += (cfg.hp || 0) - (cfg.hpPenalty || 0);
   }
 
+  // Apply class-specific stat skews so different classes diverge
+  const skew = CLASS_STAT_SKEW[classKey] || { pwr: 1, spd: 1, hp: 1 };
   return {
     classKey,
-    pwr: Math.max(1, Math.round(base.pwr)),
-    spd: Math.max(1, Math.round(base.spd)),
-    hp: Math.max(40, Math.round(base.hp)),
+    pwr: Math.max(1, Math.round(base.pwr * skew.pwr)),
+    spd: Math.max(1, Math.round(base.spd * skew.spd)),
+    hp: Math.max(40, Math.round(base.hp * skew.hp)),
     loadoutView,
   };
 }
@@ -72,6 +75,8 @@ function createState(card, actorKey, seed) {
     guard: 0,
     shield: 0,
     damageDealt: 0,
+    hitsTaken: 0,
+    hitsDealt: 0,
     openingUsed: false,
     surviveUsed: false,
     cycleActions: 0,
@@ -93,10 +98,11 @@ function loadoutConfig(state, slot) {
 
 function applyHeal(state, amount) {
   if (amount <= 0 || state.hp <= 0) return 0;
-  let penalty = state.statuses.burn > 0 ? 0.8 : 1;
+  let mult = state.statuses.burn > 0 ? 0.8 : 1;
   const powerCfg = loadoutConfig(state, 'power');
-  if (powerCfg.healPenalty) penalty *= (1 - powerCfg.healPenalty);
-  const healed = Math.min(state.hpMax - state.hp, Math.max(0, Math.floor(amount * penalty)));
+  if (powerCfg.healPenalty) mult *= (1 - powerCfg.healPenalty);
+  if (state.classKey === 'WATER') mult *= 1.15; // WATER healBonus
+  const healed = Math.min(state.hpMax - state.hp, Math.max(0, Math.floor(amount * mult)));
   state.hp += healed;
   return healed;
 }
@@ -138,8 +144,19 @@ function applyCycleEffects(state, tick, notes) {
   }
 
   // Status damage ticks
-  if (state.statuses.burn > 0) notes.push(`burn ${applyDirectDamage(state, state.statuses.burn)}`);
-  if (state.statuses.bleed > 0) notes.push(`bleed ${applyDirectDamage(state, state.statuses.bleed)}`);
+  if (state.statuses.burn > 0) {
+    const burnDmg = applyDirectDamage(state, state.statuses.burn);
+    notes.push(`burn ${burnDmg}`);
+    // 20% chance burn intensifies by 1 each cycle
+    if (state.rng() < 0.20) {
+      state.statuses.burn += 1;
+      notes.push('burn intensifies');
+    }
+  }
+  if (state.statuses.bleed > 0) {
+    const bleedDmg = applyDirectDamage(state, state.statuses.bleed);
+    notes.push(`bleed ${bleedDmg}`);
+  }
   if (speedCfg.selfDot) notes.push(`overclock ${applyDirectDamage(state, speedCfg.selfDot)}`);
 
   // Flux pulse (Reactor P3)
@@ -207,19 +224,30 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
     notes.push(`momentum +${speedCfg.momentumPwr}`);
   }
 
+  // SHADOW assassinate: bonus damage vs targets below 50% HP
+  if (attacker.classKey === 'SHADOW' && defender.hp / defender.hpMax <= 0.50) {
+    const assassinateDmg = Math.floor(damage * 0.06);
+    damage += assassinateDmg;
+    if (assassinateDmg > 0) notes.push(`assassinate +${assassinateDmg}`);
+  }
+
   // Status application (with EARTH resist + Adaptive shield-on-debuff)
   if (attacker.classKey === 'FIRE' && attacker.rng() < 0.25) {
     if (applyStatus(defender, 'burn', 2)) notes.push('burn applied');
   }
   if (attacker.classKey === 'WATER') applyStatus(defender, 'chill', 0.08);
 
-  let critChance = (speedCfg.critChance || 0) + (powerCfg.critChance || 0);
+  // Base crit chance (5%) + equipment + class bonuses
+  let critChance = 0.05 + (speedCfg.critChance || 0) + (powerCfg.critChance || 0);
+  if (attacker.classKey === 'FIRE') critChance += 0.06; // FIRE critBonus
   if (attacker.classKey === 'SHADOW' && attacker.hp / attacker.hpMax >= 0.7) critChance += 0.04;
+  // 15% chance of a "lucky strike" — random minor crit boost
+  if (attacker.rng() < 0.15) critChance += 0.08;
   const crit = attacker.rng() < critChance;
   if (crit) {
     damage = Math.floor(damage * 1.5);
     notes.push('crit');
-    // FIRE class: crits apply burn
+    // FIRE class: crits apply stronger burn
     if (attacker.classKey === 'FIRE') applyStatus(defender, 'burn', 3);
   }
 
@@ -237,6 +265,11 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
   const defenderDodge = (loadoutConfig(defender, 'speed').dodge || 0) + (defender.classKey === 'WIND' ? 0.02 : 0);
   if (defender.rng() < defenderDodge) {
     notes.push('dodged');
+    // WIND counterStrike: deal damage back on dodge
+    if (defender.classKey === 'WIND') {
+      const counterDmg = applyDirectDamage(attacker, 2);
+      if (counterDmg > 0) { defender.damageDealt += counterDmg; notes.push(`counter ${counterDmg}`); }
+    }
     attacker.lastActTick = tick;
     return { actor: attacker.actorKey, target: defender.actorKey, damage: 0, notes };
   }
@@ -256,6 +289,12 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
     if (shieldHit > 0) notes.push(`shield ${shieldHit}`);
   }
 
+  // 10% chance of a glancing blow (25% less damage) — adds variance
+  if (attacker.rng() < 0.10) {
+    damage = Math.floor(damage * 0.75);
+    notes.push('glancing');
+  }
+
   damage = Math.floor(damage * (1 + defender.temporary.damageTakenMult));
   let hpDamage = applyDirectDamage(defender, damage);
 
@@ -271,11 +310,19 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
   }
 
   attacker.damageDealt += hpDamage;
+  attacker.hitsDealt += 1;
+  defender.hitsTaken += 1;
 
   const lifesteal = (powerCfg.lifesteal || 0) + (attacker.classKey === 'SHADOW' ? 0.04 : 0);
   if (lifesteal > 0 && hpDamage > 0) {
     const healed = applyHeal(attacker, Math.floor(hpDamage * lifesteal));
     if (healed > 0) notes.push(`lifesteal +${healed}`);
+  }
+
+  // EARTH thornArmor: reflect 1 damage on every hit taken
+  if (defender.classKey === 'EARTH') {
+    const thornDmg = applyDirectDamage(attacker, 1);
+    if (thornDmg > 0) { defender.damageDealt += thornDmg; notes.push('thorn 1'); }
   }
 
   if (targetHpCfg.reflect) {
@@ -291,7 +338,7 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
   if (powerCfg.selfDamage) applyDirectDamage(attacker, powerCfg.selfDamage);
   if (speedCfg.purgeShield && defender.shield > 0) defender.shield = Math.max(0, defender.shield - speedCfg.purgeShield);
 
-  // Purge buff (Disruptor S9) — remove expose damage mult from defender's attacker (i.e., strip a temporary buff)
+  // Purge buff (Disruptor S9)
   if (speedCfg.purgeBuff && defender.temporary.fluxTicks > 0 && defender.temporary.pwr > 0) {
     defender.temporary.pwr = 0;
     defender.temporary.fluxTicks = 0;
@@ -303,6 +350,11 @@ function dealAttack(attacker, defender, secondInCycle, tick) {
     if (attacker.cycleActions % 3 === 0) {
       const dealt = applyDirectDamage(defender, 4);
       if (dealt > 0) notes.push(`void +${dealt}`);
+    }
+    // VOID voidRift: drain enemy tempo every 4th attack
+    if (attacker.cycleActions % 4 === 0) {
+      defender.tempo = Math.max(0, defender.tempo - 2);
+      notes.push('void rift -2 tempo');
     }
   }
 
@@ -370,18 +422,51 @@ export function resolveBattle(p1Card, p2Card, seed) {
     }
   }
 
+  // ── Overtime: if both alive at time limit, sudden death bleed ──
+  if (p1.hp > 0 && p2.hp > 0) {
+    let otTick = 0;
+    const otMaxTicks = 30; // 30 extra seconds max
+    while (p1.hp > 0 && p2.hp > 0 && otTick < otMaxTicks) {
+      otTick += 1;
+      // Both players take escalating bleed
+      const otDmg = otTick;
+      const p1Dmg = applyDirectDamage(p1, otDmg);
+      const p2Dmg = applyDirectDamage(p2, otDmg);
+      rounds.push({
+        round: SIM_CAP_SECONDS + otTick,
+        cycleStart: false,
+        overtime: true,
+        start: { p1: [`overtime bleed ${p1Dmg}`], p2: [`overtime bleed ${p2Dmg}`] },
+        actions: [],
+        endNotes: [],
+        end: {
+          p1: { hp: p1.hp, hpMax: p1.hpMax, shield: p1.shield, statuses: [] },
+          p2: { hp: p2.hp, hpMax: p2.hpMax, shield: p2.shield, statuses: [] },
+        },
+        leader: p1.hp === p2.hp ? 'draw' : p1.hp > p2.hp ? 'p1' : 'p2',
+      });
+    }
+  }
+
+  // ── Winner determination with extended tiebreakers ──
   let winner = 'draw';
   if (p1.hp <= 0 && p2.hp > 0) winner = 'p2';
   else if (p2.hp <= 0 && p1.hp > 0) winner = 'p1';
   else if (p1.hp !== p2.hp) winner = p1.hp > p2.hp ? 'p1' : 'p2';
   else if (p1.damageDealt !== p2.damageDealt) winner = p1.damageDealt > p2.damageDealt ? 'p1' : 'p2';
+  else if (p1.hitsDealt !== p2.hitsDealt) winner = p1.hitsDealt > p2.hitsDealt ? 'p1' : 'p2';
+  else winner = rng() < 0.5 ? 'p1' : 'p2'; // Final coin flip — no more draws
+
+  const battleDuration = rounds.length > 0 ? rounds[rounds.length - 1].round : 0;
 
   return {
+    countdown: COUNTDOWN_SECONDS,
+    battleDuration,
     rounds,
     winner,
     summary: {
-      p1: { hp: p1.hp, hpMax: p1.hpMax, damageDealt: p1.damageDealt },
-      p2: { hp: p2.hp, hpMax: p2.hpMax, damageDealt: p2.damageDealt },
+      p1: { hp: p1.hp, hpMax: p1.hpMax, damageDealt: p1.damageDealt, hitsDealt: p1.hitsDealt },
+      p2: { hp: p2.hp, hpMax: p2.hpMax, damageDealt: p2.damageDealt, hitsDealt: p2.hitsDealt },
     },
   };
 }
