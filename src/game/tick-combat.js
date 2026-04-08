@@ -57,6 +57,7 @@ export function deriveCombatStats(card, loadout, trackLevels) {
 
 function createState(card, actorKey, seed) {
   const stats = deriveCombatStats(card);
+  const speedCfg = stats.loadoutView.bySlot.speed?.currentConfig || {};
   return {
     actorKey,
     name: card.name || actorKey,
@@ -67,23 +68,22 @@ function createState(card, actorKey, seed) {
     spd: stats.spd,
     hpMax: stats.hp,
     hp: stats.hp,
-    tempo: 0,
+    tempo: speedCfg.startTempo || 0,
     guard: 0,
     shield: 0,
     damageDealt: 0,
     openingUsed: false,
     surviveUsed: false,
     cycleActions: 0,
-    consecutiveLeadActs: 0,
-    temporary: { pwr: 0, spd: 0, damageTakenMult: 0, seconds: 0 },
+    lastActTick: 0,
+    temporary: { pwr: 0, spd: 0, damageTakenMult: 0, exposeTicks: 0, fluxTicks: 0 },
     statuses: {
       burn: 0,
       bleed: 0,
       chill: 0,
       expose: 0,
-      seconds: 0,
     },
-    rng: createRng(seed + (actorKey === 'p1' ? 11 : 37)),
+    rng: createRng(seed),
   };
 }
 
@@ -93,7 +93,9 @@ function loadoutConfig(state, slot) {
 
 function applyHeal(state, amount) {
   if (amount <= 0 || state.hp <= 0) return 0;
-  const penalty = state.statuses.burn > 0 ? 0.8 : 1;
+  let penalty = state.statuses.burn > 0 ? 0.8 : 1;
+  const powerCfg = loadoutConfig(state, 'power');
+  if (powerCfg.healPenalty) penalty *= (1 - powerCfg.healPenalty);
   const healed = Math.min(state.hpMax - state.hp, Math.max(0, Math.floor(amount * penalty)));
   state.hp += healed;
   return healed;
@@ -106,28 +108,41 @@ function applyDirectDamage(state, amount) {
   return dealt;
 }
 
-function applyCycleEffects(state, notes) {
+function applyCycleEffects(state, tick, notes) {
   const hpCfg = loadoutConfig(state, 'hp');
   const powerCfg = loadoutConfig(state, 'power');
   const speedCfg = loadoutConfig(state, 'speed');
 
   state.guard = hpCfg.guardPerCycle || 0;
-  if (hpCfg.startShield && state.cycleActions === 0) state.shield += hpCfg.startShield;
+  if (hpCfg.startShield && tick <= CYCLE_SECONDS) state.shield += hpCfg.startShield;
+
+  // Regular regen
   if (hpCfg.regen) {
     const healed = applyHeal(state, hpCfg.regen + (state.classKey === 'WATER' ? 1 : 0));
     if (healed > 0) notes.push(`regen +${healed}`);
   }
-  if (hpCfg.cleanseEvery && hpCfg.cleanseEvery > 0 && (notes.cycleSecond % hpCfg.cleanseEvery === 0)) {
+
+  // Emergency regen (Laststand H8) — below 35% HP
+  if (hpCfg.emergencyRegen && state.hp / state.hpMax <= 0.35) {
+    const healed = applyHeal(state, hpCfg.emergencyRegen);
+    if (healed > 0) notes.push(`emergency regen +${healed}`);
+  }
+
+  // Cleanse (Ward H9) — cooldown scales with level
+  if (hpCfg.cleanseEvery && hpCfg.cleanseEvery > 0 && (tick % hpCfg.cleanseEvery === 0)) {
     state.statuses.burn = 0;
     state.statuses.bleed = 0;
     state.statuses.chill = 0;
     state.statuses.expose = 0;
     notes.push('cleanse');
   }
+
+  // Status damage ticks
   if (state.statuses.burn > 0) notes.push(`burn ${applyDirectDamage(state, state.statuses.burn)}`);
   if (state.statuses.bleed > 0) notes.push(`bleed ${applyDirectDamage(state, state.statuses.bleed)}`);
   if (speedCfg.selfDot) notes.push(`overclock ${applyDirectDamage(state, speedCfg.selfDot)}`);
 
+  // Flux pulse (Reactor P3)
   if (powerCfg.fluxPulse) {
     if (state.rng() > 0.5) {
       state.temporary.pwr = powerCfg.fluxPulse;
@@ -138,23 +153,39 @@ function applyCycleEffects(state, notes) {
       state.temporary.spd = -powerCfg.fluxPulse;
       notes.push(`flux -${powerCfg.fluxPulse} SPD`);
     }
-    state.temporary.seconds = CYCLE_SECONDS;
+    state.temporary.fluxTicks = CYCLE_SECONDS;
   }
 }
 
 function effectivePwr(state) {
-  return Math.max(1, state.pwr + state.temporary.pwr + (state.classKey === 'EARTH' ? 0 : 0));
+  const hpCfg = loadoutConfig(state, 'hp');
+  const base = state.pwr + state.temporary.pwr;
+  const penalty = hpCfg.outgoingPenalty ? (1 - hpCfg.outgoingPenalty) : 1;
+  return Math.max(1, Math.floor(base * penalty));
 }
 
 function effectiveSpd(state) {
+  const hpCfg = loadoutConfig(state, 'hp');
   const chillPenalty = state.statuses.chill > 0 ? Math.floor(state.spd * state.statuses.chill) : 0;
-  return Math.max(1, state.spd + state.temporary.spd - chillPenalty);
+  let bonus = 0;
+  if (hpCfg.lowHpSpeed && state.hp / state.hpMax <= 0.35) bonus += hpCfg.lowHpSpeed;
+  if (state.classKey === 'WIND') bonus += 4;
+  return Math.max(1, state.spd + state.temporary.spd - chillPenalty + bonus);
 }
 
-function dealAttack(attacker, defender, secondInCycle) {
+function applyStatus(defender, statusKey, value) {
+  // EARTH statusResist: chance to resist status application
+  if (defender.classKey === 'EARTH' && defender.rng() < 0.08) return false;
+  defender.statuses[statusKey] = Math.max(defender.statuses[statusKey], value);
+  // Adaptive H7: gain shield when debuffed
+  const defHpCfg = loadoutConfig(defender, 'hp');
+  if (defHpCfg.shieldOnDebuff) defender.shield += defHpCfg.shieldOnDebuff;
+  return true;
+}
+
+function dealAttack(attacker, defender, secondInCycle, tick) {
   const notes = [];
   const powerCfg = loadoutConfig(attacker, 'power');
-  const hpCfg = loadoutConfig(attacker, 'hp');
   const speedCfg = loadoutConfig(attacker, 'speed');
   const targetHpCfg = loadoutConfig(defender, 'hp');
   let damage = Math.max(4, Math.floor(effectivePwr(attacker) * 0.42));
@@ -168,8 +199,19 @@ function dealAttack(attacker, defender, secondInCycle) {
   if (speedCfg.firstStrike && secondInCycle === 0) damage += speedCfg.firstStrike;
   if (powerCfg.firstStrike && secondInCycle === 0) damage += powerCfg.firstStrike;
   if (powerCfg.shieldBreak && defender.shield > 0) damage += powerCfg.shieldBreak;
-  if (attacker.classKey === 'FIRE' && attacker.rng() < 0.25) defender.statuses.burn = Math.max(defender.statuses.burn, 2);
-  if (attacker.classKey === 'WATER') defender.statuses.chill = Math.max(defender.statuses.chill, 0.08);
+  if (powerCfg.shieldDamageBonus && defender.shield > 0) damage += powerCfg.shieldDamageBonus;
+
+  // Momentum (Tempo S7): bonus PWR if attacker acted more recently than defender
+  if (speedCfg.momentumPwr && attacker.lastActTick > defender.lastActTick) {
+    damage += speedCfg.momentumPwr;
+    notes.push(`momentum +${speedCfg.momentumPwr}`);
+  }
+
+  // Status application (with EARTH resist + Adaptive shield-on-debuff)
+  if (attacker.classKey === 'FIRE' && attacker.rng() < 0.25) {
+    if (applyStatus(defender, 'burn', 2)) notes.push('burn applied');
+  }
+  if (attacker.classKey === 'WATER') applyStatus(defender, 'chill', 0.08);
 
   let critChance = (speedCfg.critChance || 0) + (powerCfg.critChance || 0);
   if (attacker.classKey === 'SHADOW' && attacker.hp / attacker.hpMax >= 0.7) critChance += 0.04;
@@ -177,17 +219,25 @@ function dealAttack(attacker, defender, secondInCycle) {
   if (crit) {
     damage = Math.floor(damage * 1.5);
     notes.push('crit');
+    // FIRE class: crits apply burn
+    if (attacker.classKey === 'FIRE') applyStatus(defender, 'burn', 3);
   }
 
   if (powerCfg.execute && defender.hp / defender.hpMax <= 0.25) damage += Math.floor(defender.hpMax * powerCfg.execute);
-  if (powerCfg.expose) defender.temporary.damageTakenMult = Math.max(defender.temporary.damageTakenMult, powerCfg.expose);
-  if (speedCfg.chill) defender.statuses.chill = Math.max(defender.statuses.chill, speedCfg.chill);
-  if (speedCfg.dotPerCycle) defender.statuses.bleed = Math.max(defender.statuses.bleed, speedCfg.dotPerCycle);
 
-  const dodge = (speedCfg.dodge || 0) + (attacker.classKey === 'WIND' ? 0.02 : 0);
+  // Expose — uses its own timer, not coupled to flux
+  if (powerCfg.expose) {
+    defender.temporary.damageTakenMult = Math.max(defender.temporary.damageTakenMult, powerCfg.expose);
+    defender.temporary.exposeTicks = CYCLE_SECONDS;
+  }
+
+  if (speedCfg.chill) applyStatus(defender, 'chill', speedCfg.chill);
+  if (speedCfg.dotPerCycle) applyStatus(defender, 'bleed', speedCfg.dotPerCycle);
+
   const defenderDodge = (loadoutConfig(defender, 'speed').dodge || 0) + (defender.classKey === 'WIND' ? 0.02 : 0);
   if (defender.rng() < defenderDodge) {
     notes.push('dodged');
+    attacker.lastActTick = tick;
     return { actor: attacker.actorKey, target: defender.actorKey, damage: 0, notes };
   }
 
@@ -207,7 +257,19 @@ function dealAttack(attacker, defender, secondInCycle) {
   }
 
   damage = Math.floor(damage * (1 + defender.temporary.damageTakenMult));
-  const hpDamage = applyDirectDamage(defender, damage);
+  let hpDamage = applyDirectDamage(defender, damage);
+
+  // Survive once (Escape S8)
+  if (defender.hp <= 0 && !defender.surviveUsed) {
+    const defSpeedCfg = loadoutConfig(defender, 'speed');
+    if (defSpeedCfg.surviveOnce) {
+      defender.hp = 1;
+      defender.surviveUsed = true;
+      hpDamage = Math.max(0, hpDamage - 1);
+      notes.push('survive!');
+    }
+  }
+
   attacker.damageDealt += hpDamage;
 
   const lifesteal = (powerCfg.lifesteal || 0) + (attacker.classKey === 'SHADOW' ? 0.04 : 0);
@@ -229,6 +291,13 @@ function dealAttack(attacker, defender, secondInCycle) {
   if (powerCfg.selfDamage) applyDirectDamage(attacker, powerCfg.selfDamage);
   if (speedCfg.purgeShield && defender.shield > 0) defender.shield = Math.max(0, defender.shield - speedCfg.purgeShield);
 
+  // Purge buff (Disruptor S9) — remove expose damage mult from defender's attacker (i.e., strip a temporary buff)
+  if (speedCfg.purgeBuff && defender.temporary.fluxTicks > 0 && defender.temporary.pwr > 0) {
+    defender.temporary.pwr = 0;
+    defender.temporary.fluxTicks = 0;
+    notes.push('purge buff');
+  }
+
   if (attacker.classKey === 'VOID') {
     attacker.cycleActions += 1;
     if (attacker.cycleActions % 3 === 0) {
@@ -237,26 +306,28 @@ function dealAttack(attacker, defender, secondInCycle) {
     }
   }
 
+  attacker.lastActTick = tick;
   return { actor: attacker.actorKey, target: defender.actorKey, damage: hpDamage, notes, targetHp: defender.hp, targetShield: defender.shield };
 }
 
 export function resolveBattle(p1Card, p2Card, seed) {
-  const rng = createRng(seedFromCards(p1Card, p2Card, seed));
-  const p1 = createState(p1Card, 'p1', 17);
-  const p2 = createState(p2Card, 'p2', 31);
+  const resolvedSeed = seedFromCards(p1Card, p2Card, seed);
+  const rng = createRng(resolvedSeed);
+  const p1 = createState(p1Card, 'p1', resolvedSeed * 3 + 11);
+  const p2 = createState(p2Card, 'p2', resolvedSeed * 7 + 37);
   const rounds = [];
   let tick = 0;
 
   while (tick < SIM_CAP_SECONDS && p1.hp > 0 && p2.hp > 0) {
     tick += 1;
     const cycleStart = ((tick - 1) % CYCLE_SECONDS) === 0;
-    const cycleNotes = [];
+    const p1CycleNotes = [];
+    const p2CycleNotes = [];
     const actions = [];
 
     if (cycleStart) {
-      cycleNotes.cycleSecond = tick;
-      applyCycleEffects(p1, cycleNotes);
-      applyCycleEffects(p2, cycleNotes);
+      applyCycleEffects(p1, tick, p1CycleNotes);
+      if (p2.hp > 0) applyCycleEffects(p2, tick, p2CycleNotes);
     }
 
     p1.tempo += effectiveSpd(p1);
@@ -267,20 +338,27 @@ export function resolveBattle(p1Card, p2Card, seed) {
       const actor = (p1.tempo > p2.tempo || (p1.tempo === p2.tempo && rng() < 0.5)) ? p1 : p2;
       const defender = actor === p1 ? p2 : p1;
       actor.tempo -= 100;
-      actions.push(dealAttack(actor, defender, secondActions));
+      actions.push(dealAttack(actor, defender, secondActions, tick));
       secondActions += 1;
     }
 
-    if (p1.temporary.seconds > 0) p1.temporary.seconds -= 1;
-    if (p2.temporary.seconds > 0) p2.temporary.seconds -= 1;
-    if (p1.temporary.seconds === 0) { p1.temporary.pwr = 0; p1.temporary.spd = 0; p1.temporary.damageTakenMult = 0; }
-    if (p2.temporary.seconds === 0) { p2.temporary.pwr = 0; p2.temporary.spd = 0; p2.temporary.damageTakenMult = 0; }
+    // Decay expose timer (independent of flux)
+    for (const s of [p1, p2]) {
+      if (s.temporary.exposeTicks > 0) {
+        s.temporary.exposeTicks -= 1;
+        if (s.temporary.exposeTicks === 0) s.temporary.damageTakenMult = 0;
+      }
+      if (s.temporary.fluxTicks > 0) {
+        s.temporary.fluxTicks -= 1;
+        if (s.temporary.fluxTicks === 0) { s.temporary.pwr = 0; s.temporary.spd = 0; }
+      }
+    }
 
     if (cycleStart || actions.length || tick === SIM_CAP_SECONDS || p1.hp <= 0 || p2.hp <= 0) {
       rounds.push({
         round: tick,
         cycleStart,
-        start: { p1: cycleStart ? [...cycleNotes] : [], p2: [] },
+        start: { p1: cycleStart ? p1CycleNotes : [], p2: cycleStart ? p2CycleNotes : [] },
         actions,
         endNotes: [],
         end: {

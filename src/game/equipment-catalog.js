@@ -35,42 +35,42 @@ const CLASS_PASSIVES = {
 };
 
 const POWER_TEMPLATES = [
-  { key: 'fang', code: 'P1', name: 'Fang', pwr: 3, spdPenalty: 8, openingBurst: 2 },
-  { key: 'maul', code: 'P2', name: 'Maul', pwr: 4, spdPenalty: 10, guardAfterAttack: 1 },
-  { key: 'reactor', code: 'P3', name: 'Reactor', pwr: 8, hpPenalty: 18, critChance: 0.04, fluxPulse: 1, selfDamage: 5 },
+  { key: 'fang', code: 'P1', name: 'Fang', pwr: 5, spdPenalty: 6, openingBurst: 4 },
+  { key: 'maul', code: 'P2', name: 'Maul', pwr: 6, spdPenalty: 8, guardAfterAttack: 2 },
+  { key: 'reactor', code: 'P3', name: 'Reactor', pwr: 8, hpPenalty: 18, critChance: 0.04, fluxPulse: 2, selfDamage: 5 },
   { key: 'reaver', code: 'P4', name: 'Reaver', pwr: 6, hpPenalty: 12, lifesteal: 0.06 },
   { key: 'breaker', code: 'P5', name: 'Breaker', pwr: 7, spdPenalty: 8, expose: 0.1 },
-  { key: 'gambit', code: 'P6', name: 'Gambit', pwr: 10, hpPenalty: 16, lowHpBonus: 6 },
+  { key: 'gambit', code: 'P6', name: 'Gambit', pwr: 9, hpPenalty: 18, lowHpBonus: 6 },
   { key: 'crusher', code: 'P7', name: 'Crusher', pwr: 8, spdPenalty: 8, shieldBreak: 6 },
   { key: 'duelist', code: 'P8', name: 'Duelist', pwr: 6, spd: 4, hpPenalty: 8, firstStrike: 3 },
-  { key: 'siege', code: 'P9', name: 'Siege', pwr: 9, spdPenalty: 10, shieldDamageBonus: 6 },
-  { key: 'tyrant', code: 'P10', name: 'Tyrant', pwr: 10, spdPenalty: 6, execute: 0.14, healPenalty: 0.3 },
+  { key: 'siege', code: 'P9', name: 'Siege', pwr: 8, spdPenalty: 8, shieldDamageBonus: 6 },
+  { key: 'tyrant', code: 'P10', name: 'Tyrant', pwr: 9, spdPenalty: 8, execute: 0.12, healPenalty: 0.3 },
 ];
 
 const HP_TEMPLATES = [
   { key: 'bulwark', code: 'H1', name: 'Bulwark', hp: 18, spdPenalty: 7, startShield: 3 },
-  { key: 'carapace', code: 'H2', name: 'Carapace', hp: 16, pwrPenalty: 5, reflect: 1 },
+  { key: 'carapace', code: 'H2', name: 'Carapace', hp: 16, pwrPenalty: 5, reflect: 2 },
   { key: 'regenerator', code: 'H3', name: 'Regenerator', hp: 18, pwrPenalty: 8, regen: 2 },
   { key: 'bastion', code: 'H4', name: 'Bastion', hp: 16, spdPenalty: 10, guardPerCycle: 2 },
-  { key: 'mirror', code: 'H5', name: 'Mirror', hp: 14, spdPenalty: 8, critReflect: 4 },
-  { key: 'fortress', code: 'H6', name: 'Fortress', hp: 24, spdPenalty: 8, guardPerCycle: 1, outgoingPenalty: 0.18 },
+  { key: 'mirror', code: 'H5', name: 'Mirror', hp: 18, spdPenalty: 6, critReflect: 5 },
+  { key: 'fortress', code: 'H6', name: 'Fortress', hp: 22, spdPenalty: 10, guardPerCycle: 2, outgoingPenalty: 0.20 },
   { key: 'adaptive', code: 'H7', name: 'Adaptive', hp: 20, pwrPenalty: 6, shieldOnDebuff: 3 },
   { key: 'laststand', code: 'H8', name: 'Laststand', hp: 16, pwrPenalty: 8, emergencyRegen: 4, lowHpSpeed: 6 },
-  { key: 'ward', code: 'H9', name: 'Ward', hp: 16, spdPenalty: 8, cleanseEvery: 15 },
-  { key: 'drainwall', code: 'H10', name: 'Drainwall', hp: 18, spdPenalty: 8, healOnGuard: 1 },
+  { key: 'ward', code: 'H9', name: 'Ward', hp: 18, spdPenalty: 6, cleanseEvery: 15 },
+  { key: 'drainwall', code: 'H10', name: 'Drainwall', hp: 18, spdPenalty: 8, healOnGuard: 2 },
 ];
 
 const SPEED_TEMPLATES = [
-  { key: 'featherstep', code: 'S1', name: 'Featherstep', spd: 4, hpPenalty: 12, dodge: 0.02 },
+  { key: 'featherstep', code: 'S1', name: 'Featherstep', spd: 6, hpPenalty: 8, dodge: 0.03 },
   { key: 'booster', code: 'S2', name: 'Booster', spd: 8, pwrPenalty: 8, startTempo: 35 },
   { key: 'blink', code: 'S3', name: 'Blink', spd: 7, hpPenalty: 10, shieldAfterAttack: 2 },
   { key: 'pursuit', code: 'S4', name: 'Pursuit', spd: 5, pwr: 2, hpPenalty: 14, firstStrike: 2 },
   { key: 'harrier', code: 'S5', name: 'Harrier', spd: 6, pwrPenalty: 8, dotPerCycle: 2, chill: 0.08 },
   { key: 'slipstream', code: 'S6', name: 'Slipstream', spd: 8, hpPenalty: 16, critChance: 0.03 },
-  { key: 'tempo', code: 'S7', name: 'Tempo', spd: 5, hpPenalty: 8, momentumPwr: 1 },
+  { key: 'tempo', code: 'S7', name: 'Tempo', spd: 5, hpPenalty: 8, momentumPwr: 2 },
   { key: 'escape', code: 'S8', name: 'Escape', spd: 8, pwrPenalty: 8, surviveOnce: true },
   { key: 'disruptor', code: 'S9', name: 'Disruptor', spd: 6, hpPenalty: 10, purgeShield: 4, purgeBuff: 1 },
-  { key: 'overclock', code: 'S10', name: 'Overclock', spd: 10, pwrPenalty: 12, firstStrike: 3, selfDot: 2 },
+  { key: 'overclock', code: 'S10', name: 'Overclock', spd: 9, pwrPenalty: 14, firstStrike: 3, selfDot: 2 },
 ];
 
 function scalePositive(base, level) {
@@ -83,6 +83,14 @@ function scaleNegative(base, level) {
 
 function scalePercent(base, level) {
   return Number((base * POSITIVE_SCALE[level]).toFixed(3));
+}
+
+function scalePercentNeg(base, level) {
+  return Number((base * NEGATIVE_SCALE[level]).toFixed(3));
+}
+
+function scaleCooldown(base, level) {
+  return Math.max(5, Math.round(base / POSITIVE_SCALE[level]));
 }
 
 function buildEffects(slot, levelConfig, classKey) {
@@ -98,6 +106,7 @@ function buildEffects(slot, levelConfig, classKey) {
   if (levelConfig.expose) effects.push(`Hits inflict Expose (+${Math.round(levelConfig.expose * 100)}% damage taken)`);
   if (levelConfig.lowHpBonus) effects.push(`Below 35% HP: +${levelConfig.lowHpBonus} damage`);
   if (levelConfig.shieldBreak) effects.push(`+${levelConfig.shieldBreak} bonus damage vs shields`);
+  if (levelConfig.shieldDamageBonus) effects.push(`+${levelConfig.shieldDamageBonus} bonus damage vs shielded targets`);
   if (levelConfig.firstStrike) effects.push(`+${levelConfig.firstStrike} damage when acting before the target`);
   if (levelConfig.execute) effects.push(`+${Math.round(levelConfig.execute * 100)}% execute bonus under 25% enemy HP`);
   if (levelConfig.startShield) effects.push(`Start battle with Shield ${levelConfig.startShield}`);
@@ -131,6 +140,8 @@ function buildEffects(slot, levelConfig, classKey) {
   if (passive.extraRegen && slot === 'hp') effects.push(`Class: +${passive.extraRegen} bonus regen`);
   if (passive.chillOnCycleHit && slot === 'power') effects.push('Class: first cycle hit applies Chill');
   if (passive.startShield && slot === 'hp') effects.push(`Class: +${passive.startShield} starting shield`);
+  if (passive.statusResist && slot === 'hp') effects.push(`Class: ${Math.round(passive.statusResist * 100)}% status resistance`);
+  if (passive.tempoGain && slot === 'speed') effects.push(`Class: +${passive.tempoGain} tempo per cycle`);
   if (passive.dodge && slot === 'speed') effects.push(`Class: +${Math.round(passive.dodge * 100)}% dodge`);
   if (passive.lifesteal && slot === 'power') effects.push(`Class: +${Math.round(passive.lifesteal * 100)}% lifesteal`);
   if (passive.bleedReflect && slot === 'hp') effects.push('Class: first hit taken inflicts Bleed');
@@ -143,20 +154,22 @@ function resolveLevelConfig(slot, template, level) {
   const config = {};
   if (slot === 'power') {
     config.pwr = scalePositive(template.pwr || 0, level);
+    config.spd = scalePositive(template.spd || 0, level);
     config.spdPenalty = scaleNegative(template.spdPenalty || 0, level);
     config.hpPenalty = scaleNegative(template.hpPenalty || 0, level);
     config.openingBurst = scalePositive(template.openingBurst || 0, level);
-    config.guardAfterAttack = Math.max(0, Math.floor((template.guardAfterAttack || 0) * POSITIVE_SCALE[level]));
+    config.guardAfterAttack = scalePositive(template.guardAfterAttack || 0, level);
     config.critChance = scalePercent(template.critChance || 0, level);
-    config.fluxPulse = Math.max(0, Math.floor((template.fluxPulse || 0) * POSITIVE_SCALE[level]));
+    config.fluxPulse = scalePositive(template.fluxPulse || 0, level);
     config.lifesteal = scalePercent(template.lifesteal || 0, level);
     config.expose = scalePercent(template.expose || 0, level);
     config.lowHpBonus = scalePositive(template.lowHpBonus || 0, level);
     config.shieldBreak = scalePositive(template.shieldBreak || 0, level);
+    config.shieldDamageBonus = scalePositive(template.shieldDamageBonus || 0, level);
     config.firstStrike = scalePositive(template.firstStrike || 0, level);
     config.execute = scalePercent(template.execute || 0, level);
     config.selfDamage = scaleNegative(template.selfDamage || 0, level);
-    config.healPenalty = scalePercent(template.healPenalty || 0, level);
+    config.healPenalty = scalePercentNeg(template.healPenalty || 0, level);
   } else if (slot === 'hp') {
     config.hp = scalePositive(template.hp || 0, level);
     config.spdPenalty = scaleNegative(template.spdPenalty || 0, level);
@@ -164,13 +177,13 @@ function resolveLevelConfig(slot, template, level) {
     config.startShield = scalePositive(template.startShield || 0, level);
     config.reflect = scalePositive(template.reflect || 0, level);
     config.regen = scalePositive(template.regen || 0, level);
-    config.guardPerCycle = Math.max(0, Math.floor((template.guardPerCycle || 0) * POSITIVE_SCALE[level]));
+    config.guardPerCycle = scalePositive(template.guardPerCycle || 0, level);
     config.critReflect = scalePositive(template.critReflect || 0, level);
-    config.outgoingPenalty = scalePercent(template.outgoingPenalty || 0, level);
+    config.outgoingPenalty = scalePercentNeg(template.outgoingPenalty || 0, level);
     config.shieldOnDebuff = scalePositive(template.shieldOnDebuff || 0, level);
     config.emergencyRegen = scalePositive(template.emergencyRegen || 0, level);
     config.lowHpSpeed = scalePositive(template.lowHpSpeed || 0, level);
-    config.cleanseEvery = template.cleanseEvery || 0;
+    config.cleanseEvery = template.cleanseEvery ? scaleCooldown(template.cleanseEvery, level) : 0;
     config.healOnGuard = scalePositive(template.healOnGuard || 0, level);
   } else {
     config.spd = scalePositive(template.spd || 0, level);
