@@ -1035,10 +1035,9 @@ async function resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId
   const p1Stats = buildCardStats(p1Row, selfCard);
   const p2Stats = buildCardStats(p2Row, oppCard);
   const seed    = battleSeed(String(selfCard.tokenId), String(oppCard.tokenId));
-  // Use DB-authoritative stats for battle resolution (p1Row/p2Row), falling back to queue snapshot only if DB row missing
-  const p1Battle = p1Row ? { ...selfCard, ...p1Row } : selfCard;
-  const p2Battle = p2Row ? { ...oppCard, ...p2Row } : oppCard;
-  const result  = resolveBattle(p1Battle, p2Battle, seed);
+  // Queue snapshots are built server-side from DB data + equipment loadout (see handleQueue).
+  // Client stat overrides are stripped at queue entry, so snapshots are authoritative.
+  const result  = resolveBattle(selfCard, oppCard, seed);
   const winner  = result.winner === 'p1' ? selfAddr : result.winner === 'p2' ? oppAddr : null;
 
   const p1XP       = calcXP(p1Stats.rarity, p2Stats.rarity, result.winner === 'p1', result.winner === 'draw');
@@ -1958,9 +1957,11 @@ async function handleQueue(request, env) {
   const addr     = address.toLowerCase();
   const ticketId = crypto.randomUUID();
   const cardRow  = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
-  const trackLevels = await getTrackLevelsForClass(env, addr, cardRow?.element || card.element);
-  const loadout  = await getCardLoadoutRecord(env, addr, card.tokenId, cardRow?.element || card.element);
-  const queuedCard = attachCardLoadout({ ...cardRow, ...card }, loadout, trackLevels, cardRow?.element || card.element);
+  if (!cardRow) return json({ error: 'not_registered', message: 'Register a card first' }, 400);
+  const trackLevels = await getTrackLevelsForClass(env, addr, cardRow.element);
+  const loadout  = await getCardLoadoutRecord(env, addr, card.tokenId, cardRow.element);
+  // Use DB row as authoritative source — only take tokenId from client to identify the card
+  const queuedCard = attachCardLoadout(cardRow, loadout, trackLevels, cardRow.element);
   const cardJson = JSON.stringify(queuedCard);
   const profile  = computeMatchProfile(cardRow, queuedCard);
 
