@@ -10,6 +10,17 @@ import { resolveBattle, calcXP, NPC_OPPONENTS }      from '../traits.js';
 import { buildEquipmentCardView, getForgeShardReward, getFreeTrackLevels, getStarterLoadout } from '../game/equipment-system.js';
 
 const HAS_SERVER = !!import.meta.env.VITE_API_URL;
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
+// ── Background queue worker ────────────────────────────────────────────────
+let queueWorker = null;
+
+function getQueueWorker() {
+  if (!queueWorker) {
+    queueWorker = new Worker(new URL('../queue-worker.js', import.meta.url), { type: 'module' });
+  }
+  return queueWorker;
+}
 
 function pickOpponent(excludeTokenId) {
   const pool = NPC_OPPONENTS.filter(o => o.tokenId !== excludeTokenId);
@@ -86,6 +97,28 @@ export function renderArena(app) {
      <span class="record-losses">${losses}L</span>`;
 
   wrap.querySelector('#btn-battle').onclick = () => startBattle(wrap, myCard, address);
+
+  // Resume queue if user navigated away and came back while still in queue
+  if (HAS_SERVER) {
+    try {
+      const saved = JSON.parse(localStorage.getItem('zenkai_queue') || 'null');
+      if (saved && saved.address === address && saved.ticketId && (Date.now() - saved.startedAt) < 90000) {
+        pollQueue(address, saved.ticketId).then((data) => {
+          if (data.status === 'matched') {
+            localStorage.removeItem('zenkai_queue');
+            // Auto-resume the matched battle
+            startBattle(wrap, myCard, address);
+          } else if (data.status === 'waiting') {
+            startBattle(wrap, myCard, address);
+          } else {
+            localStorage.removeItem('zenkai_queue');
+          }
+        }).catch(() => localStorage.removeItem('zenkai_queue'));
+      } else {
+        localStorage.removeItem('zenkai_queue');
+      }
+    } catch { localStorage.removeItem('zenkai_queue'); }
+  }
 }
 
 // ── Battle sequence ──────────────────────────────────────────────────────────
@@ -182,7 +215,7 @@ async function startBattleServerV2(wrap, myCard, address) {
   const search = { cancelled: false, cancelResult: null, ticketId: null };
 
   btn.disabled    = true;
-  btn.textContent = 'ENTERING QUEUEâ€¦';
+  btn.textContent = 'ENTERING QUEUE\u2026';
   log.innerHTML   = '';
   wrap._searchSession = search;
 
@@ -193,13 +226,17 @@ async function startBattleServerV2(wrap, myCard, address) {
   search.ticketId = ticketId;
 
   if (result.status === 'waiting') {
+    // Persist queue state so we can resume after minimize/restore
+    localStorage.setItem('zenkai_queue', JSON.stringify({ address, ticketId, startedAt: Date.now() }));
+
     btn.disabled = false;
     btn.textContent = 'CANCEL SEARCH';
     btn.onclick = async () => {
       if (search.cancelled) return;
       search.cancelled = true;
       btn.disabled = true;
-      btn.textContent = 'CANCELLINGâ€¦';
+      btn.textContent = 'CANCELLING\u2026';
+      worker.postMessage({ type: 'stop' });
       try {
         search.cancelResult = await cancelQueue(address, search.ticketId);
       } catch {
@@ -207,15 +244,57 @@ async function startBattleServerV2(wrap, myCard, address) {
       }
     };
 
-    let tries = 0;
-    while (result.status === 'waiting' && tries < 45 && !search.cancelled) {
-      await wait(2000);
-      tries++;
-      btn.textContent = `CANCEL SEARCH â€¢ ${tries * 2}s`;
-      result = await pollQueue(address, ticketId);
-      ticketId = result.ticketId || ticketId;
-      search.ticketId = ticketId;
-    }
+    // Use Web Worker for background-safe polling
+    const worker = getQueueWorker();
+    const pollPromise = new Promise((resolve) => {
+      const startedAt = Date.now();
+      const onMessage = (e) => {
+        if (search.cancelled) { worker.removeEventListener('message', onMessage); resolve(); return; }
+        if (e.data.type === 'poll_result') {
+          const data = e.data.data;
+          ticketId = e.data.ticketId || ticketId;
+          search.ticketId = ticketId;
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          btn.textContent = `CANCEL SEARCH \u2022 ${elapsed}s`;
+
+          if (data.status === 'matched') {
+            result = data;
+            worker.removeEventListener('message', onMessage);
+            resolve();
+          } else if (data.status === 'superseded' || data.status === 'idle') {
+            result = data;
+            worker.removeEventListener('message', onMessage);
+            resolve();
+          }
+          // Update localStorage so visibility handler can read latest ticket
+          localStorage.setItem('zenkai_queue', JSON.stringify({ address, ticketId, startedAt }));
+        }
+      };
+      worker.addEventListener('message', onMessage);
+
+      // Also stop after 90s max
+      setTimeout(() => { if (!search.cancelled && result.status === 'waiting') { worker.postMessage({ type: 'stop' }); resolve(); } }, 90000);
+    });
+
+    worker.postMessage({ type: 'start', baseUrl: API_BASE, address, ticketId, interval: 2000 });
+
+    // Visibility API: when app comes back to foreground, do an instant poll
+    const onVisible = async () => {
+      if (document.visibilityState !== 'visible' || search.cancelled) return;
+      try {
+        const fresh = await pollQueue(address, search.ticketId);
+        if (fresh.status === 'matched') {
+          result = fresh;
+          worker.postMessage({ type: 'stop' });
+        }
+      } catch {}
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    await pollPromise;
+
+    document.removeEventListener('visibilitychange', onVisible);
+    localStorage.removeItem('zenkai_queue');
   }
 
   if (search.cancelled) {
@@ -225,7 +304,7 @@ async function startBattleServerV2(wrap, myCard, address) {
       result = cancelResult;
     } else if (cancelResult.status === 'waiting' && cancelResult.phase) {
       btn.disabled = true;
-      btn.textContent = 'FINALIZING MATCHâ€¦';
+      btn.textContent = 'FINALIZING MATCH\u2026';
       result = cancelResult;
 
       let gracePolls = 0;
