@@ -21,7 +21,13 @@ export function renderHome(app) {
   const stats = card.level ? card : { level: 1, xp: 0 };
   const xpNext = (stats.level || 1) * 100;
   const xpPct = Math.min(100, Math.round(((stats.xp || 0) / xpNext) * 100));
-  const forgeShards = parseInt(localStorage.getItem('zenkai_forge_shards') || String(card.forge_shards || 0), 10) || 0;
+  const wins = card.wins || 0;
+  const losses = card.losses || 0;
+  const totalBattles = wins + losses;
+  const winRate = totalBattles > 0 ? Math.round((wins / totalBattles) * 100) : 0;
+  const rating = card.competitive_rating || 1500;
+  const tier = card.competitive_tier || 'Gold';
+  const element = card.element || '???';
 
   const el = document.createElement('div');
   el.className = 'home-page';
@@ -55,12 +61,12 @@ export function renderHome(app) {
             <span class="home-qstat-label">XP</span>
           </div>
           <div class="home-qstat">
-            <span class="home-qstat-val">${card.wins || 0}W</span>
+            <span class="home-qstat-val">${wins}W</span>
             <span class="home-qstat-label">WINS</span>
           </div>
           <div class="home-qstat">
-            <span class="home-qstat-val">${forgeShards}</span>
-            <span class="home-qstat-label">SHARDS</span>
+            <span class="home-qstat-val">${esc(element)}</span>
+            <span class="home-qstat-label">CLASS</span>
           </div>
         </div>
 
@@ -78,54 +84,46 @@ export function renderHome(app) {
         </div>
       </aside>
 
-      <!-- Right: Nav + feed -->
+      <!-- Right: Nav buttons (expanded) -->
       <main class="home-main">
         <nav class="home-nav">
-          <button class="home-nav-btn home-nav-primary" data-route="/arena">
+          <button class="home-nav-btn home-nav-primary home-nav-expanded" data-route="/arena">
             <div class="home-nav-icon">⚔️</div>
             <span class="home-nav-label">BATTLE</span>
             <span class="home-nav-desc">Enter the arena</span>
+            <div class="home-nav-preview">
+              <span class="home-nav-stat">${wins}W / ${losses}L</span>
+              <span class="home-nav-stat">${winRate}% WIN RATE</span>
+            </div>
           </button>
-          <button class="home-nav-btn" data-route="/profile">
+          <button class="home-nav-btn home-nav-expanded" data-route="/profile">
             <div class="home-nav-icon">👤</div>
             <span class="home-nav-label">PROFILE</span>
             <span class="home-nav-desc">Stats & settings</span>
+            <div class="home-nav-preview">
+              <span class="home-nav-stat">${esc(tier)} ${rating}</span>
+              <span class="home-nav-stat">${totalBattles} BATTLES</span>
+            </div>
           </button>
-          <button class="home-nav-btn" data-route="/equipment">
+          <button class="home-nav-btn home-nav-expanded" data-route="/equipment">
             <div class="home-nav-icon">🃏</div>
             <span class="home-nav-label">INVENTORY</span>
-            <span class="home-nav-desc">Loadout & shop</span>
+            <span class="home-nav-desc">Loadout & gear</span>
+            <div class="home-nav-preview">
+              <span class="home-nav-stat">3 SLOTS EQUIPPED</span>
+              <span class="home-nav-stat">LVL ${stats.level || 1} GEAR</span>
+            </div>
           </button>
-          <button class="home-nav-btn" data-route="/leaderboard">
+          <button class="home-nav-btn home-nav-expanded" data-route="/leaderboard">
             <div class="home-nav-icon">🏆</div>
             <span class="home-nav-label">LEADERBOARD</span>
             <span class="home-nav-desc">Top warriors</span>
+            <div class="home-nav-preview">
+              <span class="home-nav-stat">SEASON 1 RANKINGS</span>
+              <span class="home-nav-stat">COMPETE & CLIMB</span>
+            </div>
           </button>
         </nav>
-
-        <div class="home-section">
-          <div class="home-section-header">
-            <span class="home-section-title">RECENT ACTIVITY</span>
-            <span class="home-section-badge">LIVE</span>
-          </div>
-          <div class="home-feed" id="home-feed">
-            <div class="home-feed-item">
-              <span class="feed-icon">⚡</span>
-              <span class="feed-text">Warrior awakened</span>
-              <span class="feed-time">just now</span>
-            </div>
-            <div class="home-feed-item feed-dim">
-              <span class="feed-icon">🔗</span>
-              <span class="feed-text">Wallet connected</span>
-              <span class="feed-time">just now</span>
-            </div>
-            <div class="home-feed-item feed-dim">
-              <span class="feed-icon">✍️</span>
-              <span class="feed-text">Ownership verified</span>
-              <span class="feed-time">just now</span>
-            </div>
-          </div>
-        </div>
       </main>
 
     </div>
