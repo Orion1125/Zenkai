@@ -1768,6 +1768,8 @@ a.zk-card-id {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .equipment-overview {
