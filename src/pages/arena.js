@@ -564,6 +564,7 @@ async function animateRounds(log, slotMe, slotOpp, rounds) {
       </div>
     `;
     log.appendChild(roundEl);
+    log.scrollTop = log.scrollHeight;
   }
 }
 
@@ -578,6 +579,7 @@ function showFinalResult(log, won, draw, myCard, opp, xpEarned, forgeEarned) {
     ? `<span class="final-text">DRAW</span><span class="final-xp">+${xp} XP${shardText}</span>`
     : `<span class="final-text">DEFEAT</span><span class="final-xp">+${xp} XP${shardText}</span>`;
   log.appendChild(resultEl);
+  log.scrollTop = log.scrollHeight;
 }
 
 function updateRecordDisplay(wrap, wins, losses) {

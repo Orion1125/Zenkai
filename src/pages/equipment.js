@@ -120,6 +120,8 @@ function renderEquipmentContent(wrap, state) {
       `).join('')}
     </div>
 
+    <p class="equipment-status" id="equipment-status"></p>
+
     <div class="profile-nav">
       <button class="btn-ghost" id="btn-home-equip">HOME</button>
       <button class="btn-ghost" id="btn-arena-equip">ENTER ARENA</button>
@@ -129,30 +131,68 @@ function renderEquipmentContent(wrap, state) {
   wrap.querySelector('#btn-home-equip')?.addEventListener('click', () => navigate('/home'));
   wrap.querySelector('#btn-arena-equip')?.addEventListener('click', () => navigate('/arena'));
 
-  wrap.querySelectorAll('.equipment-action').forEach((button) => {
+  const statusEl = wrap.querySelector('#equipment-status');
+  const allActions = wrap.querySelectorAll('.equipment-action');
+  const tokenId = card.tokenId || card.token_id;
+
+  if (!tokenId) {
+    statusEl.textContent = 'Card token missing — return to dashboard and reload.';
+    statusEl.className = 'equipment-status visible error';
+    allActions.forEach((b) => { b.disabled = true; });
+    return;
+  }
+
+  allActions.forEach((button) => {
     button.addEventListener('click', async () => {
+      if (button.disabled) return;
       const trackId = button.dataset.trackId;
       const slot = button.dataset.slot;
-      button.disabled = true;
+      const originalLabel = button.textContent;
+
+      // Lock all action buttons during save to prevent stale-loadout races
+      allActions.forEach((b) => { b.disabled = true; });
+      button.textContent = 'SAVING...';
+      statusEl.textContent = '';
+      statusEl.className = 'equipment-status';
 
       const nextLoadout = {
         powerTrackId: slot === 'power' ? trackId : loadout.powerTrackId,
         hpTrackId: slot === 'hp' ? trackId : loadout.hpTrackId,
         speedTrackId: slot === 'speed' ? trackId : loadout.speedTrackId,
       };
-      const saved = await updateEquipmentLoadout(address, card.tokenId || card.token_id, nextLoadout, classKey);
-      if (saved.error) {
-        button.disabled = false;
-        button.textContent = saved.message || 'FAILED';
-        return;
-      }
 
-      const updatedCard = buildEquipmentCardView(card, saved.loadout || nextLoadout, trackLevels, classKey);
-      localStorage.setItem('zenkai_card', JSON.stringify(updatedCard));
-      renderEquipmentContent(wrap, {
-        ...state,
-        card: updatedCard,
-      });
+      try {
+        const saved = await updateEquipmentLoadout(address, tokenId, nextLoadout, classKey);
+        if (saved && saved.error) {
+          button.textContent = originalLabel;
+          statusEl.textContent = saved.message || 'Could not save loadout.';
+          statusEl.className = 'equipment-status visible error';
+          allActions.forEach((b) => { b.disabled = b.classList.contains('equipped-lock'); });
+          return;
+        }
+
+        const updatedCard = saved?.card
+          ? { ...card, ...saved.card, tokenId, token_id: tokenId }
+          : buildEquipmentCardView(card, saved?.loadout || nextLoadout, trackLevels, classKey);
+        localStorage.setItem('zenkai_card', JSON.stringify(updatedCard));
+        renderEquipmentContent(wrap, {
+          ...state,
+          card: updatedCard,
+        });
+        const nextStatus = wrap.querySelector('#equipment-status');
+        if (nextStatus) {
+          nextStatus.textContent = 'Loadout saved.';
+          nextStatus.className = 'equipment-status visible success';
+          setTimeout(() => {
+            nextStatus.className = 'equipment-status';
+          }, 2200);
+        }
+      } catch (err) {
+        button.textContent = originalLabel;
+        statusEl.textContent = 'Connection error — try again.';
+        statusEl.className = 'equipment-status visible error';
+        allActions.forEach((b) => { b.disabled = false; });
+      }
     });
   });
 }

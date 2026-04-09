@@ -475,10 +475,71 @@ async function getTrackLevelsForClass(env, address, cardClass) {
 }
 
 async function hasActiveQueueLock(env, address) {
+  // Clean up stale entries first so abandoned searches don't lock the user out
+  await env.DB.prepare(
+    "DELETE FROM battle_queue WHERE address = ? AND queued_at < datetime('now', '-120 seconds')"
+  ).bind(address).run();
   const row = await env.DB.prepare(
     "SELECT status FROM battle_queue WHERE address = ? AND status IN ('searching', 'matching') LIMIT 1"
   ).bind(address).first();
   return !!row;
+}
+
+// Save a game_cards row into card_progress so it survives a card switch.
+async function saveCardProgress(env, address, cardRow) {
+  if (!cardRow || !cardRow.token_id) return;
+  await env.DB.prepare(
+    `INSERT INTO card_progress (
+       address, token_id, name, image, element, ability, rarity,
+       pwr, def, hp, spd, level, xp, wins, losses,
+       competitive_rating, competitive_rd, competitive_volatility, competitive_matches, last_played_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(address, token_id) DO UPDATE SET
+       name = excluded.name,
+       image = excluded.image,
+       element = excluded.element,
+       ability = excluded.ability,
+       rarity = excluded.rarity,
+       pwr = excluded.pwr,
+       def = excluded.def,
+       hp = excluded.hp,
+       spd = excluded.spd,
+       level = excluded.level,
+       xp = excluded.xp,
+       wins = excluded.wins,
+       losses = excluded.losses,
+       competitive_rating = excluded.competitive_rating,
+       competitive_rd = excluded.competitive_rd,
+       competitive_volatility = excluded.competitive_volatility,
+       competitive_matches = excluded.competitive_matches,
+       last_played_at = CURRENT_TIMESTAMP`
+  ).bind(
+    address,
+    String(cardRow.token_id),
+    cardRow.name || null,
+    cardRow.image || null,
+    cardRow.element || null,
+    cardRow.ability || null,
+    cardRow.rarity || null,
+    cardRow.pwr ?? null,
+    cardRow.def ?? null,
+    cardRow.hp ?? null,
+    cardRow.spd ?? null,
+    Number(cardRow.level || 1),
+    Number(cardRow.xp || 0),
+    Number(cardRow.wins || 0),
+    Number(cardRow.losses || 0),
+    Number(cardRow.competitive_rating ?? DEFAULT_COMPETITIVE_RATING),
+    Number(cardRow.competitive_rd ?? DEFAULT_COMPETITIVE_RD),
+    Number(cardRow.competitive_volatility ?? DEFAULT_COMPETITIVE_VOLATILITY),
+    Number(cardRow.competitive_matches || 0)
+  ).run();
+}
+
+async function loadCardProgress(env, address, tokenId) {
+  return env.DB.prepare(
+    'SELECT * FROM card_progress WHERE address = ? AND token_id = ?'
+  ).bind(address, String(tokenId)).first();
 }
 
 async function getCardLoadoutRecord(env, address, tokenId, cardClass) {
@@ -728,6 +789,31 @@ async function ensureMatchmakingSchema(env) {
              PRIMARY KEY (address, token_id)
            )`
         ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS card_progress (
+             address TEXT NOT NULL,
+             token_id TEXT NOT NULL,
+             name TEXT,
+             image TEXT,
+             element TEXT,
+             ability TEXT,
+             rarity TEXT,
+             pwr INTEGER,
+             def INTEGER,
+             hp INTEGER,
+             spd INTEGER,
+             level INTEGER DEFAULT 1,
+             xp INTEGER DEFAULT 0,
+             wins INTEGER DEFAULT 0,
+             losses INTEGER DEFAULT 0,
+             competitive_rating REAL DEFAULT ${DEFAULT_COMPETITIVE_RATING},
+             competitive_rd REAL DEFAULT ${DEFAULT_COMPETITIVE_RD},
+             competitive_volatility REAL DEFAULT ${DEFAULT_COMPETITIVE_VOLATILITY},
+             competitive_matches INTEGER DEFAULT 0,
+             last_played_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (address, token_id)
+           )`
+        ),
       ]);
 
       const [queueInfo, battleInfo, cardInfo] = await env.DB.batch([
@@ -896,6 +982,21 @@ async function ensureMatchmakingSchema(env) {
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_game_cards_competitive_rating ON game_cards(competitive_rating DESC, wins DESC)'),
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_equipment_track_levels_class_key ON equipment_track_levels(address, class_key)'),
         env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_card_loadouts_address ON card_loadouts(address, token_id)'),
+        env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_card_progress_address ON card_progress(address, last_played_at DESC)'),
+        // Backfill: seed card_progress from any existing game_cards rows so current
+        // active cards become selectable entries in the multi-card system.
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO card_progress
+             (address, token_id, name, image, element, ability, rarity,
+              pwr, def, hp, spd, level, xp, wins, losses,
+              competitive_rating, competitive_rd, competitive_volatility, competitive_matches, last_played_at)
+           SELECT address, token_id, name, image, element, ability, rarity,
+                  pwr, def, hp, spd, level, xp, wins, losses,
+                  competitive_rating, competitive_rd, competitive_volatility, competitive_matches,
+                  CURRENT_TIMESTAMP
+             FROM game_cards
+            WHERE token_id IS NOT NULL`
+        ),
       ]);
     })().catch((err) => {
       _matchmakingSchemaPromise = null;
@@ -1373,18 +1474,67 @@ export default {
       // ── Game: Leaderboard ─────────────────────────────────────────────────
       if (method === 'GET' && path === '/api/game/leaderboard') {
         const rows = await env.DB.prepare(
-          `SELECT address, level, xp, wins, losses, hp, competitive_rating, competitive_matches
-             FROM game_cards
-            ORDER BY wins DESC, losses ASC, level DESC, address ASC
+          `SELECT gc.address, gc.level, gc.xp, gc.wins, gc.losses, gc.hp,
+                  gc.competitive_rating, gc.competitive_matches,
+                  p.display_name
+             FROM game_cards gc
+             LEFT JOIN profiles p ON p.address = gc.address
+            ORDER BY gc.wins DESC, gc.losses ASC, gc.level DESC, gc.address ASC
             LIMIT 50`
         ).all();
         return json({
           leaderboard: rows.results.map((row) => ({
             ...row,
+            display_name: row.display_name || null,
             competitive_rating: Math.round(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
             competitive_tier: competitiveTierFromRating(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
           })),
         });
+      }
+
+      // ── Game: Card roster (all played cards with per-card progress) ──────
+      if (method === 'GET' && path.startsWith('/api/game/cards/')) {
+        const address = path.split('/').pop().toLowerCase();
+        if (!isValidEthAddress(address)) return json({ error: 'invalid' }, 400);
+
+        const active = await env.DB.prepare(
+          'SELECT * FROM game_cards WHERE address = ?'
+        ).bind(address).first();
+        const progressRows = await env.DB.prepare(
+          'SELECT * FROM card_progress WHERE address = ? ORDER BY last_played_at DESC'
+        ).bind(address).all();
+
+        const activeTokenId = active?.token_id || null;
+        const toCardView = (row, isActive) => ({
+          tokenId: row.token_id,
+          name: row.name || null,
+          image: row.image || null,
+          element: row.element || null,
+          rarity: row.rarity || null,
+          level: Number(row.level || 1),
+          xp: Number(row.xp || 0),
+          wins: Number(row.wins || 0),
+          losses: Number(row.losses || 0),
+          competitive_rating: Math.round(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
+          competitive_tier: competitiveTierFromRating(Number(row.competitive_rating ?? DEFAULT_COMPETITIVE_RATING)),
+          is_active: !!isActive,
+        });
+
+        const seen = new Set();
+        const cards = [];
+        // Active card first (with live game_cards data, never stale)
+        if (active) {
+          cards.push(toCardView(active, true));
+          seen.add(active.token_id);
+        }
+        // Then everything else from card_progress
+        for (const row of progressRows.results || []) {
+          if (seen.has(row.token_id)) continue;
+          cards.push(toCardView(row, false));
+          seen.add(row.token_id);
+        }
+
+        return json({ cards, activeTokenId });
       }
 
       // ── Profile: Get ──────────────────────────────────────────────────────
@@ -1510,43 +1660,107 @@ async function handleGameRegister(request, env) {
   const existing = await env.DB.prepare(
     'SELECT * FROM game_cards WHERE address = ?'
   ).bind(addr).first();
-  const seedHp = clampStat(hp, 100, 1000) ?? (180 + ((Number(safeDef) || 50) * 3) + (((existing?.level || 1)) * 10));
-  const seedCard = { tokenId: tid, pwr: safePwr, def: safeDef, hp: seedHp, spd: safeSpd, element: safeElement, ability: safeAbility, rarity: safeRarity, level: existing?.level || 1 };
+
+  // Detect a card switch (user picked a different NFT than their current active card)
+  const isSwitch = !!(existing && existing.token_id && existing.token_id !== tid);
+
+  // When switching, persist prior card's progress so the user can return to it later
+  if (isSwitch) {
+    await saveCardProgress(env, addr, existing);
+  }
+
+  // If the target token has saved progress from a previous session, resume from it.
+  // On a switch with no prior progress, start the new card fresh (do NOT inherit old card's stats).
+  const savedProgress = (isSwitch || !existing) ? await loadCardProgress(env, addr, tid) : null;
+  const freshStart    = isSwitch && !savedProgress;
+
+  const resumedLevel   = savedProgress?.level   ?? (freshStart ? 1 : existing?.level   ?? 1);
+  const resumedXp      = savedProgress?.xp      ?? (freshStart ? 0 : existing?.xp      ?? 0);
+  const resumedWins    = savedProgress?.wins    ?? (freshStart ? 0 : existing?.wins    ?? 0);
+  const resumedLosses  = savedProgress?.losses  ?? (freshStart ? 0 : existing?.losses  ?? 0);
+  const resumedRating  = savedProgress?.competitive_rating  ?? (freshStart ? DEFAULT_COMPETITIVE_RATING  : existing?.competitive_rating  ?? DEFAULT_COMPETITIVE_RATING);
+  const resumedRd      = savedProgress?.competitive_rd      ?? (freshStart ? DEFAULT_COMPETITIVE_RD      : existing?.competitive_rd      ?? DEFAULT_COMPETITIVE_RD);
+  const resumedVol     = savedProgress?.competitive_volatility ?? (freshStart ? DEFAULT_COMPETITIVE_VOLATILITY : existing?.competitive_volatility ?? DEFAULT_COMPETITIVE_VOLATILITY);
+  const resumedMatches = savedProgress?.competitive_matches ?? (freshStart ? 0 : existing?.competitive_matches ?? 0);
+  const resumedLastRated = savedProgress?.last_played_at ?? (freshStart ? null : existing?.last_rated_at ?? null);
+
+  const seedHp = clampStat(hp, 100, 1000) ?? (180 + ((Number(safeDef) || 50) * 3) + ((resumedLevel || 1) * 10));
+  const seedCard = { tokenId: tid, pwr: safePwr, def: safeDef, hp: seedHp, spd: safeSpd, element: safeElement, ability: safeAbility, rarity: safeRarity, level: resumedLevel };
   const seededState = getCompetitiveState(existing, seedCard);
 
   if (existing) {
-    await env.DB.prepare(
-      `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
-       pwr = COALESCE(?, pwr), def = COALESCE(?, def), hp = ?, spd = COALESCE(?, spd),
-       element = COALESCE(?, element), ability = COALESCE(?, ability), rarity = COALESCE(?, rarity), traits_json = ?,
-       competitive_rating = COALESCE(competitive_rating, ?),
-       competitive_rd = COALESCE(competitive_rd, ?),
-       competitive_volatility = COALESCE(competitive_volatility, ?),
-       competitive_matches = COALESCE(competitive_matches, 0),
-       updated_at = CURRENT_TIMESTAMP WHERE address = ?`
-    ).bind(
-      tid,
-      cleanName,
-      cleanImage,
-      safePwr,
-      safeDef,
-      seedHp,
-      safeSpd,
-      safeElement,
-      safeAbility,
-      safeRarity,
-      traitsJson,
-      seededState.rating,
-      seededState.rd,
-      seededState.volatility,
-      addr
-    ).run();
+    // On a switch, overwrite the active card slot with resumed progress values.
+    // On a normal sync (same token), preserve live level/xp/wins/losses via COALESCE.
+    if (isSwitch) {
+      await env.DB.prepare(
+        `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
+         pwr = ?, def = ?, hp = ?, spd = ?,
+         element = ?, ability = ?, rarity = ?, traits_json = ?,
+         level = ?, xp = ?, wins = ?, losses = ?,
+         competitive_rating = ?,
+         competitive_rd = ?,
+         competitive_volatility = ?,
+         competitive_matches = ?,
+         last_rated_at = ?,
+         updated_at = CURRENT_TIMESTAMP WHERE address = ?`
+      ).bind(
+        tid,
+        cleanName,
+        cleanImage,
+        safePwr,
+        safeDef,
+        seedHp,
+        safeSpd,
+        safeElement,
+        safeAbility,
+        safeRarity,
+        traitsJson,
+        resumedLevel,
+        resumedXp,
+        resumedWins,
+        resumedLosses,
+        resumedRating,
+        resumedRd,
+        resumedVol,
+        resumedMatches,
+        resumedLastRated,
+        addr
+      ).run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
+         pwr = COALESCE(?, pwr), def = COALESCE(?, def), hp = ?, spd = COALESCE(?, spd),
+         element = COALESCE(?, element), ability = COALESCE(?, ability), rarity = COALESCE(?, rarity), traits_json = ?,
+         competitive_rating = COALESCE(competitive_rating, ?),
+         competitive_rd = COALESCE(competitive_rd, ?),
+         competitive_volatility = COALESCE(competitive_volatility, ?),
+         competitive_matches = COALESCE(competitive_matches, 0),
+         updated_at = CURRENT_TIMESTAMP WHERE address = ?`
+      ).bind(
+        tid,
+        cleanName,
+        cleanImage,
+        safePwr,
+        safeDef,
+        seedHp,
+        safeSpd,
+        safeElement,
+        safeAbility,
+        safeRarity,
+        traitsJson,
+        seededState.rating,
+        seededState.rd,
+        seededState.volatility,
+        addr
+      ).run();
+    }
   } else {
     await env.DB.prepare(
       `INSERT INTO game_cards (
          address, token_id, name, image, pwr, def, hp, spd, element, ability, rarity, traits_json,
+         level, xp, wins, losses,
          competitive_rating, competitive_rd, competitive_volatility, competitive_matches
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       addr,
       tid,
@@ -1560,14 +1774,20 @@ async function handleGameRegister(request, env) {
       safeAbility,
       safeRarity,
       traitsJson,
-      seededState.rating,
-      seededState.rd,
-      seededState.volatility,
-      seededState.matches
+      resumedLevel,
+      resumedXp,
+      resumedWins,
+      resumedLosses,
+      resumedRating,
+      resumedRd,
+      resumedVol,
+      resumedMatches
     ).run();
   }
 
   const card = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
+  // Mirror the active card into card_progress so newly selected cards show up in listings
+  await saveCardProgress(env, addr, card);
   const progress = await getPlayerProgress(env, addr);
   const trackLevels = await getTrackLevelsForClass(env, addr, card?.element || seedCard.element);
   const loadout = await getCardLoadoutRecord(env, addr, tid, card?.element || seedCard.element);

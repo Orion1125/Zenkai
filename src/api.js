@@ -66,6 +66,11 @@ export async function getLeaderboard() {
   return apiGet('/api/game/leaderboard');
 }
 
+export async function getPlayerCards(address) {
+  if (!BASE) return { cards: [], activeTokenId: null };
+  return apiGet(`/api/game/cards/${address}`);
+}
+
 export async function getProfile(address) {
   if (!BASE) {
     const progress = getLocalEquipmentProgress(address).progress;

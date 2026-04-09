@@ -782,6 +782,18 @@ a.zk-card-id {
   flex-shrink: 0;
 }
 
+/* Change card button */
+.home-change-card {
+  width: 100% !important;
+  padding: 10px 14px !important;
+  font-size: 0.64rem !important;
+  letter-spacing: 2px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 /* Season bar */
 .home-season-bar {
   display: flex;
@@ -792,6 +804,211 @@ a.zk-card-id {
   background: rgba(255,208,0,0.03);
   border: 1px solid rgba(255,208,0,0.08);
   border-radius: 6px;
+}
+
+/* ── Change Card Modal ── */
+.change-card-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.change-card-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+
+.change-card-panel {
+  position: relative;
+  max-width: 520px;
+  width: 100%;
+  max-height: 85vh;
+  background: var(--bg-card, #0f0f14);
+  border: 1px solid rgba(255, 208, 0, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 24px 20px 20px;
+  overflow-y: auto;
+  animation: ccFadeIn 0.22s ease;
+}
+
+@keyframes ccFadeIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.change-card-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.change-card-close:hover {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+.change-card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  letter-spacing: 4px;
+  color: var(--gold);
+  text-align: center;
+  margin: 0 0 4px;
+}
+
+.change-card-sub {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0 0 16px;
+}
+
+.change-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.change-card-loading,
+.change-card-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 30px 10px;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+}
+
+.change-card-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+}
+
+.change-card-item:hover:not(:disabled) {
+  border-color: var(--gold);
+  background: rgba(255, 208, 0, 0.04);
+  transform: translateY(-2px);
+}
+
+.change-card-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.change-card-item.loading {
+  opacity: 0.6;
+}
+
+.change-card-item.active {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(255, 208, 0, 0.4), 0 0 24px rgba(255, 208, 0, 0.12);
+}
+
+.change-card-art {
+  aspect-ratio: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.change-card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.change-card-art-blank {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 2rem;
+  font-family: var(--font-display);
+}
+
+.change-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.change-card-name {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 1.5px;
+  color: var(--text);
+}
+
+.change-card-element {
+  font-size: 0.54rem;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+.change-card-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.58rem;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.change-card-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-family: var(--font-display);
+  font-size: 0.5rem;
+  letter-spacing: 1.5px;
+  color: #0c0c10;
+  background: var(--gold);
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+@media (max-width: 540px) {
+  .change-card-panel {
+    padding: 18px 14px 14px;
+    max-height: 90vh;
+  }
+  .change-card-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
 }
 
 .home-season-label {
@@ -1157,11 +1374,20 @@ a.zk-card-id {
   gap: 6px;
   width: 100%;
   max-width: 260px;
-  max-height: 55vh;
+  max-height: 320px;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
-  padding-right: 4px;
+  padding: 10px;
+  background: rgba(10, 10, 14, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.4);
+}
+
+.battle-log:empty {
+  display: none;
 }
 
 .battle-log::-webkit-scrollbar { width: 4px; }
@@ -1422,7 +1648,7 @@ a.zk-card-id {
     width: 100%;
   }
 
-  .battle-log { max-width: 100%; max-height: 40vh; }
+  .battle-log { max-width: 100%; max-height: 260px; }
 }
 
 /* ── No NFT state ── */
@@ -1701,6 +1927,20 @@ a.zk-card-id {
 .profile-save-status.visible { opacity: 1; }
 .profile-save-status.success { color: var(--gold); }
 .profile-save-status.error   { color: var(--red-bright); }
+
+.equipment-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-align: center;
+  min-height: 1.2em;
+  margin: 8px 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.equipment-status.visible { opacity: 1; }
+.equipment-status.success { color: var(--gold); }
+.equipment-status.error   { color: var(--red-bright); }
 
 .profile-nav {
   display: flex; gap: 10px;

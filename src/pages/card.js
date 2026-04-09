@@ -19,7 +19,7 @@ export function deriveStats(tokenId, attributes) {
   return deriveStatsFromHash(tokenId);
 }
 
-async function fetchNFTs(address) {
+export async function fetchNFTs(address) {
   const key = import.meta.env.VITE_ALCHEMY_KEY;
   if (!key) {
     console.warn('[ZENKAI] VITE_ALCHEMY_KEY is empty — cannot fetch NFTs');

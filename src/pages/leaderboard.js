@@ -46,6 +46,8 @@ export async function renderLeaderboard(app) {
       const medal = rank === 1 ? '&#x1F947;' : rank === 2 ? '&#x1F948;' : rank === 3 ? '&#x1F949;' : `#${rank}`;
       const addr = e.wallet || e.address || '';
       const short = addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '???';
+      const name = (e.display_name || '').trim();
+      const label = name || short;
       const wins = e.wins ?? e.w ?? 0;
       const losses = e.losses ?? e.l ?? 0;
       const rating = e.competitive_rating ?? 1500;
@@ -54,7 +56,7 @@ export async function renderLeaderboard(app) {
       return `
         <div class="lb-row${highlight}">
           <span class="lb-rank">${medal}</span>
-          <span class="lb-addr">${esc(short)} • ${esc(tier)} ${esc(rating)}</span>
+          <span class="lb-addr">${esc(label)} • ${esc(tier)} ${esc(rating)}</span>
           <span class="lb-record">${Number(wins)}W / ${Number(losses)}L</span>
         </div>
       `;
