@@ -47,6 +47,7 @@ export function renderArena(app) {
   wrap.className = 'arena-wrap';
   wrap.innerHTML = `
     <div class="arena-header">
+      <button class="btn-ghost arena-back" id="btn-back">\u2190 BACK</button>
       <div class="brand-logo arena-logo">ZENKAI</div>
       <div class="arena-wallet-row">
         <span class="arena-addr">${esc(address.slice(0,6))}…${esc(address.slice(-4))}</span>
@@ -80,6 +81,7 @@ export function renderArena(app) {
   `;
   app.appendChild(wrap);
 
+  wrap.querySelector('#btn-back').addEventListener('click', () => navigate('/home'));
   wrap.querySelector('#btn-disconnect').addEventListener('click', () => {
     localStorage.removeItem('zenkai_wallet');
     localStorage.removeItem('zenkai_card');
