@@ -4,7 +4,6 @@ import {
   getEquipmentCatalog,
   getEquipmentLoadout,
   getEquipmentProgress,
-  purchaseEquipmentLevel,
   updateEquipmentLoadout,
 } from '../api.js';
 import { buildEquipmentCardView, getLoadoutStatDelta, normalizeCardClass } from '../game/equipment-system.js';
@@ -46,12 +45,11 @@ export async function renderEquipment(app) {
     tracks,
     trackLevels,
     forgeShards,
-    activeTab: 'loadout',
   });
 }
 
 function renderEquipmentContent(wrap, state) {
-  const { address, card, classKey, tracks, trackLevels, forgeShards, activeTab } = state;
+  const { address, card, classKey, tracks, trackLevels } = state;
   const loadout = card.equipmentLoadout;
   const delta = getLoadoutStatDelta(loadout, classKey, trackLevels);
   const groups = {
@@ -79,7 +77,7 @@ function renderEquipmentContent(wrap, state) {
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">LOADOUT</span>
-          <span class="equipment-summary-value equipment-summary-list">${loadout.summary.map(esc).join(' \u2022 ')}</span>
+          <span class="equipment-summary-value equipment-summary-list">${(loadout.summary || []).map(esc).join(' \u2022 ')}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">DELTA</span>
@@ -98,7 +96,7 @@ function renderEquipmentContent(wrap, state) {
           <div class="divider">${slot.toUpperCase()} TRACKS</div>
           <div class="equipment-grid">
             ${groups[slot].map((track) => {
-              const current = trackLevels[track.trackId] || 1;
+              const current = Math.min(trackLevels[track.trackId] || 1, track.levels.length);
               const equipped = (
                 (slot === 'power' && loadout.powerTrackId === track.trackId) ||
                 (slot === 'hp' && loadout.hpTrackId === track.trackId) ||
@@ -130,43 +128,12 @@ function renderEquipmentContent(wrap, state) {
 
   wrap.querySelector('#btn-home-equip')?.addEventListener('click', () => navigate('/home'));
   wrap.querySelector('#btn-arena-equip')?.addEventListener('click', () => navigate('/arena'));
-  wrap.querySelectorAll('.equipment-tab').forEach((button) => {
-    button.addEventListener('click', () => renderEquipmentContent(wrap, { ...state, activeTab: button.dataset.tab }));
-  });
 
   wrap.querySelectorAll('.equipment-action').forEach((button) => {
     button.addEventListener('click', async () => {
-      const mode = button.dataset.mode;
       const trackId = button.dataset.trackId;
       const slot = button.dataset.slot;
       button.disabled = true;
-
-      if (mode === 'buy') {
-        const purchase = await purchaseEquipmentLevel(address, classKey, trackId);
-        if (purchase.error) {
-          button.disabled = false;
-          button.textContent = purchase.message || 'FAILED';
-          return;
-        }
-        const nextTrackLevels = purchase.progress.trackLevels || purchase.progress.trackLevelsByClass?.[classKey] || trackLevels;
-        renderEquipmentContent(wrap, {
-          ...state,
-          trackLevels: nextTrackLevels,
-          forgeShards: purchase.progress.forgeShards,
-          card: (() => {
-            const updatedCard = buildEquipmentCardView(
-              { ...card, forge_shards: purchase.progress.forgeShards },
-              loadout,
-              nextTrackLevels,
-              classKey
-            );
-            localStorage.setItem('zenkai_card', JSON.stringify(updatedCard));
-            localStorage.setItem('zenkai_forge_shards', String(purchase.progress.forgeShards));
-            return updatedCard;
-          })(),
-        });
-        return;
-      }
 
       const nextLoadout = {
         powerTrackId: slot === 'power' ? trackId : loadout.powerTrackId,
@@ -185,7 +152,6 @@ function renderEquipmentContent(wrap, state) {
       renderEquipmentContent(wrap, {
         ...state,
         card: updatedCard,
-        activeTab: 'loadout',
       });
     });
   });

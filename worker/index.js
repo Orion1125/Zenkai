@@ -6,7 +6,6 @@ import {
   getEquipmentById,
   getEquipmentCatalogByClass,
   getForgeShardReward,
-  getFreeTrackLevels,
   getStarterLoadout,
   normalizeCardClass,
   resolveBattle as resolveEquipmentBattle,
@@ -50,10 +49,10 @@ function corsHeaders(request) {
 // Per-request context holder (isolated via AsyncLocalStorage-like pattern)
 let _currentRequest = null;
 
-function withRequest(request, fn) {
+async function withRequest(request, fn) {
   const prev = _currentRequest;
   _currentRequest = request;
-  try { return fn(); } finally { _currentRequest = prev; }
+  try { return await fn(); } finally { _currentRequest = prev; }
 }
 
 function json(data, status = 200, request) {
@@ -140,96 +139,6 @@ function battleSeed(p1id, p2id) {
 }
 
 // ── Full trait-based battle resolution (mirrors frontend traits.js) ──────────
-
-function resolveBattleLegacy(p1, p2, seed) {
-  const rng = seededRng(seed || battleSeed(String(p1.pwr), String(p2.pwr)));
-
-  const lvlBonus1 = (p1.level || 1) * 1.2;
-  const lvlBonus2 = (p2.level || 1) * 1.2;
-
-  let elemAdv1 = 0, elemAdv2 = 0;
-  if (p1.element && p2.element) {
-    if (ELEMENT_ADVANTAGE[p1.element] === p2.element) elemAdv1 = 8;
-    if (ELEMENT_ADVANTAGE[p2.element] === p1.element) elemAdv2 = 8;
-  }
-
-  const shadowBonus = (el) => el === 'SHADOW' ? 5 : 0;
-  const shadowPen   = (el) => el === 'SHADOW' ? 5 : 0;
-
-  const STATS = ['PWR', 'DEF', 'SPD'];
-  const rounds = [];
-  let p1Score = 0, p2Score = 0;
-
-  for (let i = 0; i < 3; i++) {
-    const stat = STATS[i];
-    let v1 = (p1[stat.toLowerCase()] || 50) + lvlBonus1 + elemAdv1 + shadowBonus(p1.element);
-    let v2 = (p2[stat.toLowerCase()] || 50) + lvlBonus2 + elemAdv2 + shadowBonus(p2.element);
-
-    v1 -= shadowPen(p1.element);
-    v2 -= shadowPen(p2.element);
-
-    // Apply abilities
-    if (stat === 'PWR') {
-      if (p1.ability === 'ZENKAI SURGE')  v1 += rng() < 0.3 ? 15 : 0;
-      if (p2.ability === 'ZENKAI SURGE')  v2 += rng() < 0.3 ? 15 : 0;
-      if (p1.ability === 'BLOODLUST')     v1 += 6;
-      if (p2.ability === 'BLOODLUST')     v2 += 6;
-      if (p1.ability === 'PREDATOR')      v1 += p2.pwr < p1.pwr ? 8 : 0;
-      if (p2.ability === 'PREDATOR')      v2 += p1.pwr < p2.pwr ? 8 : 0;
-    }
-    if (stat === 'DEF') {
-      if (p1.ability === 'AWAKENED')  v1 += 5;
-      if (p2.ability === 'AWAKENED')  v2 += 5;
-      if (p1.ability === 'RESOLVE' && i === 2) v1 += 10;
-      if (p2.ability === 'RESOLVE' && i === 2) v2 += 10;
-    }
-    if (stat === 'SPD') {
-      if (p1.ability === 'FLASH')  v1 += 7;
-      if (p2.ability === 'FLASH')  v2 += 7;
-    }
-
-    // Variance
-    v1 += Math.floor(rng() * 9);
-    v2 += Math.floor(rng() * 9);
-
-    v1 = Math.round(v1);
-    v2 = Math.round(v2);
-
-    let result;
-    if (v1 > v2)      { result = 'p1'; p1Score++; }
-    else if (v2 > v1) { result = 'p2'; p2Score++; }
-    else               { result = 'draw'; }
-
-    rounds.push({ stat, p1: v1, p2: v2, result });
-  }
-
-  // MIRROR COUNTER: post-battle reversal
-  for (let i = 0; i < rounds.length; i++) {
-    const r = rounds[i];
-    if (r.result === 'p2' && p1.ability === 'MIRROR COUNTER' && rng() < 0.25) {
-      r.result = 'p1'; r.stat += ' (MIRROR)'; p1Score++; p2Score--;
-    } else if (r.result === 'p1' && p2.ability === 'MIRROR COUNTER' && rng() < 0.25) {
-      r.result = 'p2'; r.stat += ' (MIRROR)'; p2Score++; p1Score--;
-    }
-  }
-
-  return {
-    rounds,
-    winner: p1Score > p2Score ? 'p1' : p2Score > p1Score ? 'p2' : 'draw',
-  };
-}
-
-// ── XP calculation (mirrors frontend) ────────────────────────────────────────
-
-function calcXPLegacy(myRarity, oppRarity, won, draw) {
-  const RARITY_VAL = { COMMON: 1, UNCOMMON: 2, RARE: 3, EPIC: 4, LEGENDARY: 5 };
-  const mine = RARITY_VAL[myRarity] || 1;
-  const opp  = RARITY_VAL[oppRarity] || 1;
-  const diff = opp - mine;
-  if (won)  return Math.max(5, 50 + diff * 5);
-  if (draw) return 15;
-  return Math.max(5, 10 + diff * 3);
-}
 
 function resolveBattle(p1, p2, seed) {
   return resolveEquipmentBattle(p1, p2, seed);
@@ -1310,7 +1219,7 @@ async function attemptMatchForTicket(env, address, ticketId) {
 
 export default {
   async fetch(request, env) {
-    _currentRequest = request;
+    return withRequest(request, async () => {
     const url    = new URL(request.url);
     const path   = url.pathname;
     const method = request.method;
@@ -1479,6 +1388,7 @@ export default {
       console.error('[zenkai]', err?.message || err);
       return json({ error: 'server_error' }, 500);
     }
+    }); // withRequest
   },
 };
 
@@ -1666,73 +1576,7 @@ async function handleEquipmentProgress(address, env) {
 }
 
 async function handleEquipmentPurchase(request, env) {
-  // Equipment levels are now tied to card level — no individual purchases needed
   return json({ error: 'disabled', message: 'Equipment levels advance automatically with your card level' }, 400);
-
-  // Legacy code below — kept for reference
-  const { address, classKey, trackId } = await request.json();
-
-  if (!address || !isValidEthAddress(address)) {
-    return json({ error: 'invalid', message: 'Invalid address' }, 400);
-  }
-
-  const addr = address.toLowerCase();
-  if (await hasActiveQueueLock(env, addr)) {
-    return json({ error: 'locked', message: 'Cannot change equipment while matchmaking is active' }, 409);
-  }
-
-  const track = getEquipmentById(trackId);
-  const normalizedClass = normalizeCardClass(classKey);
-  if (!track || track.classKey !== normalizedClass) {
-    return json({ error: 'invalid', message: 'Track does not match the requested class' }, 400);
-  }
-
-  const cardRow = await env.DB.prepare(
-    'SELECT element FROM game_cards WHERE address = ?'
-  ).bind(addr).first();
-  if (!cardRow || normalizeCardClass(cardRow.element) !== normalizedClass) {
-    return json({ error: 'invalid', message: 'Current card class does not match this equipment class' }, 400);
-  }
-
-  const trackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
-  const currentLevel = trackLevels[track.trackId] || 1;
-  if (currentLevel >= 10) {
-    return json({ error: 'max_level', message: 'Track is already max level' }, 400);
-  }
-
-  const nextLevel = track.levels[currentLevel];
-
-  // Atomic conditional UPDATE — prevents double-spend race condition
-  // The WHERE clause ensures shards >= cost; if concurrent request already spent them,
-  // this UPDATE affects 0 rows and we detect the failure.
-  const spendResult = await env.DB.prepare(
-    `UPDATE player_progress
-        SET forge_shards = forge_shards - ?,
-            updated_at = CURRENT_TIMESTAMP
-      WHERE address = ? AND forge_shards >= ?`
-  ).bind(nextLevel.price, addr, nextLevel.price).run();
-
-  const rowsChanged = Number(spendResult.meta?.changes || spendResult.meta?.rows_written || 0);
-  if (rowsChanged === 0) {
-    return json({ error: 'insufficient_forge_shards', message: 'Not enough Forge Shards' }, 400);
-  }
-
-  await env.DB.prepare(
-    `INSERT INTO equipment_track_levels (address, class_key, track_id, current_level, updated_at)
-     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(address, track_id) DO UPDATE SET
-       current_level = excluded.current_level,
-       updated_at = CURRENT_TIMESTAMP`
-  ).bind(addr, normalizedClass, track.trackId, currentLevel + 1).run();
-
-  const updatedProgress = await getPlayerProgress(env, addr);
-  const updatedTrackLevels = await getTrackLevelsForClass(env, addr, normalizedClass);
-  return json({
-    success: true,
-    trackId: track.trackId,
-    purchasedLevel: currentLevel + 1,
-    progress: buildEquipmentProgressPayload(addr, normalizedClass, updatedProgress, updatedTrackLevels),
-  });
 }
 
 async function handleEquipmentLoadoutGet(address, tokenId, env) {

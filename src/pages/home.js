@@ -110,7 +110,7 @@ export function renderHome(app) {
             <span class="home-nav-label">INVENTORY</span>
             <span class="home-nav-desc">Loadout & gear</span>
             <div class="home-nav-preview">
-              <span class="home-nav-stat">3 SLOTS EQUIPPED</span>
+              <span class="home-nav-stat">${(() => { const lo = card.equipmentLoadout; return lo ? Object.values({ p: lo.powerTrackId, h: lo.hpTrackId, s: lo.speedTrackId }).filter(Boolean).length : 0; })()} SLOTS EQUIPPED</span>
               <span class="home-nav-stat">LVL ${stats.level || 1} GEAR</span>
             </div>
           </button>
