@@ -101,7 +101,7 @@ export function renderHome(app) {
             <span class="home-nav-label">PROFILE</span>
             <span class="home-nav-desc">Stats & settings</span>
             <div class="home-nav-preview">
-              <span class="home-nav-stat">${esc(tier)} ${rating}</span>
+              <span class="home-nav-stat">${esc(tier)} ${Number(rating) || 1500}</span>
               <span class="home-nav-stat">${totalBattles} BATTLES</span>
             </div>
           </button>

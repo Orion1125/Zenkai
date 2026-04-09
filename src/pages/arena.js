@@ -537,8 +537,8 @@ async function animateRounds(log, slotMe, slotOpp, rounds) {
     const actionLines = (round.actions || []).map((action) => {
       const actor = action.actor === 'p1' ? 'YOU' : 'OPP';
       const target = action.target === 'p1' ? 'YOU' : 'OPP';
-      const notes = (action.notes || []).length ? ` • ${(action.notes || []).join(', ')}` : '';
-      return `<div class="battle-round-line">${actor} → ${target} ${action.damage} dmg${action.heal ? ` • +${action.heal} heal` : ''}${notes}</div>`;
+      const notes = (action.notes || []).length ? ` • ${(action.notes || []).map(esc).join(', ')}` : '';
+      return `<div class="battle-round-line">${actor} → ${target} ${esc(String(action.damage))} dmg${action.heal ? ` • +${esc(String(action.heal))} heal` : ''}${notes}</div>`;
     }).join('');
     const startNotes = [...(round.start?.p1 || []), ...(round.start?.p2 || [])]
       .map((note) => `<div class="battle-round-note">${esc(note)}</div>`)
@@ -552,15 +552,15 @@ async function animateRounds(log, slotMe, slotOpp, rounds) {
     roundEl.className = `battle-round battle-round-v2 ${stateClass}`;
     roundEl.innerHTML = `
       <div class="battle-round-head">
-        <span class="battle-round-title">ROUND ${round.round}</span>
+        <span class="battle-round-title">ROUND ${Number(round.round) || '?'}</span>
         <span class="battle-round-state">${round.leader === 'p1' ? 'YOU LEAD' : round.leader === 'p2' ? 'OPP LEADS' : 'DEAD EVEN'}</span>
       </div>
       ${startNotes}
       ${actionLines}
       ${endNotes}
       <div class="battle-round-foot">
-        <span>YOU ${round.end?.p1?.hp || 0}/${round.end?.p1?.hpMax || 0} HP${round.end?.p1?.shield ? ` • SH ${round.end.p1.shield}` : ''}</span>
-        <span>OPP ${round.end?.p2?.hp || 0}/${round.end?.p2?.hpMax || 0} HP${round.end?.p2?.shield ? ` • SH ${round.end.p2.shield}` : ''}</span>
+        <span>YOU ${Number(round.end?.p1?.hp) || 0}/${Number(round.end?.p1?.hpMax) || 0} HP${round.end?.p1?.shield ? ` • SH ${Number(round.end.p1.shield)}` : ''}</span>
+        <span>OPP ${Number(round.end?.p2?.hp) || 0}/${Number(round.end?.p2?.hpMax) || 0} HP${round.end?.p2?.shield ? ` • SH ${Number(round.end.p2.shield)}` : ''}</span>
       </div>
     `;
     log.appendChild(roundEl);

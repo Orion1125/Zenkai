@@ -44,6 +44,14 @@ function corsHeaders(request) {
   };
 }
 
+// ── URL sanitization (block javascript: and other dangerous schemes) ──────────
+
+function sanitizeUrl(raw) {
+  if (!raw) return null;
+  try { const u = new URL(raw); return ['https:', 'http:'].includes(u.protocol) ? raw : null; }
+  catch { return null; }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Per-request context holder (isolated via AsyncLocalStorage-like pattern)
@@ -55,12 +63,18 @@ async function withRequest(request, fn) {
   try { return await fn(); } finally { _currentRequest = prev; }
 }
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
+
 function json(data, status = 200, request) {
   const req = request || _currentRequest;
   const cors = req ? corsHeaders(req) : { 'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0] };
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...cors, 'Content-Type': 'application/json' },
+    headers: { ...cors, ...SECURITY_HEADERS, 'Content-Type': 'application/json' },
   });
 }
 
@@ -70,6 +84,7 @@ function csvResponse(text, filename, request) {
   return new Response(text, {
     headers: {
       ...cors,
+      ...SECURITY_HEADERS,
       'Content-Type': 'text/csv',
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
@@ -88,11 +103,29 @@ function getClientIp(request) {
   );
 }
 
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) {
+    // Compare against self to burn same time, then return false
+    const dummy = new Uint8Array(a.length);
+    const enc = new TextEncoder();
+    const aBytes = enc.encode(a);
+    let d = 0;
+    for (let i = 0; i < aBytes.length; i++) d |= aBytes[i] ^ dummy[i];
+    return false;
+  }
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) diff |= aBytes[i] ^ bBytes[i];
+  return diff === 0;
+}
+
 function requireAdmin(request, env) {
   const token = env.ADMIN_TOKEN;
   if (!token) return json({ error: 'admin_not_configured' }, 503);
   const auth = request.headers.get('Authorization') || '';
-  if (auth !== `Bearer ${token}`) return json({ error: 'unauthorized' }, 401);
+  if (!timingSafeEqual(auth, `Bearer ${token}`)) return json({ error: 'unauthorized' }, 401);
   return null;
 }
 
@@ -1403,7 +1436,7 @@ async function handleSubmitWallet(request, env) {
 
   const addr        = address.toLowerCase();
   const cleanHandle = (handle || '').trim().slice(0, 100) || null;
-  const cleanUrl    = (quoteUrl || '').trim().slice(0, 500) || null;
+  const cleanUrl    = sanitizeUrl((quoteUrl || '').trim().slice(0, 500));
 
   await env.DB.prepare(
     'INSERT INTO submissions (address, handle, quote_url) VALUES (?, ?, ?)'
@@ -1457,9 +1490,10 @@ async function handleGameRegister(request, env) {
   }
 
   const addr       = address.toLowerCase();
-  const tid        = String(tokenId);
+  const tid        = String(tokenId).slice(0, 78).replace(/[^0-9a-zA-Z_-]/g, '');
+  if (!tid) return json({ error: 'invalid', message: 'Invalid tokenId' }, 400);
   const cleanName  = (name || '').slice(0, 200) || null;
-  const cleanImage = (image || '').slice(0, 500) || null;
+  const cleanImage = sanitizeUrl((image || '').slice(0, 500));
   const traitsJson = attributes ? JSON.stringify(attributes).slice(0, 5000) : null;
 
   // Validate and clamp stat values to prevent arbitrary stat injection
@@ -1972,7 +2006,7 @@ async function handleProfileUpsert(request, env) {
   const addr      = address.toLowerCase();
   const cleanName = (displayName || '').trim().slice(0, 50) || null;
   const cleanBio  = (bio || '').trim().slice(0, 280) || null;
-  const cleanUrl  = (avatarUrl || '').trim().slice(0, 500) || null;
+  const cleanUrl  = sanitizeUrl((avatarUrl || '').trim().slice(0, 500));
 
   const existing = await env.DB.prepare(
     'SELECT * FROM profiles WHERE address = ?'

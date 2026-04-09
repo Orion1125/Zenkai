@@ -53,7 +53,7 @@ export function renderConnect(app) {
     } catch (err) {
       btn.disabled = false;
       btn.textContent = '⚡ CONNECT WALLET';
-      const msg = err.code === 4001 ? 'Connection rejected.' : (err.message || 'Something went wrong.');
+      const msg = err.code === 4001 ? 'Connection rejected.' : 'Something went wrong.';
       status.textContent = msg;
       status.style.color = 'var(--red-bright)';
     }

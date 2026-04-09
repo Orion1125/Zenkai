@@ -7,6 +7,7 @@ import { getProfile, updateProfile }   from '../api.js';
 
 const esc = (s) => String(s || '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const safeUrl = (u) => { try { const p = new URL(u); return ['https:', 'http:'].includes(p.protocol) ? u : ''; } catch { return ''; } };
 
 export async function renderProfile(app) {
   const address = localStorage.getItem('zenkai_wallet');
@@ -69,8 +70,8 @@ function renderProfileContent(wrap, address, data) {
 
     <div class="profile-card stagger-in">
       <div class="profile-avatar-wrap">
-        ${avatar
-          ? `<img class="profile-avatar" src="${esc(avatar)}" alt="Avatar" />`
+        ${avatar && safeUrl(avatar)
+          ? `<img class="profile-avatar" src="${esc(safeUrl(avatar))}" alt="Avatar" />`
           : `<div class="profile-avatar-blank">戦</div>`
         }
         <div class="profile-level-badge">LV ${level}</div>

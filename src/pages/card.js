@@ -92,6 +92,7 @@ export function buildCardHTML(card) {
 
   // Safe text escaping
   const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  const safeUrl = (u) => { try { const p = new URL(u); return ['https:', 'http:'].includes(p.protocol) ? u : ''; } catch { return ''; } };
   const rColor = stats.rarityColor || '#888';
   const elemBadge = stats.element
     ? `<span class="zk-element-badge" style="background:${stats.elementColor}">${esc(stats.element)}</span>`
@@ -112,8 +113,8 @@ export function buildCardHTML(card) {
         <span class="zk-card-rarity" style="color:${rColor}">${esc(stats.rarity)}</span>
       </div>
       <div class="zk-card-art-wrap">
-        ${card.image
-          ? `<img class="zk-card-art" src="${esc(card.image)}" alt="${esc(card.name)}" onerror="this.style.display='none'" />`
+        ${card.image && safeUrl(card.image)
+          ? `<img class="zk-card-art" src="${esc(safeUrl(card.image))}" alt="${esc(card.name)}" onerror="this.style.display='none'" />`
           : `<div class="zk-card-art-blank"><span>?</span></div>`
         }
         <div class="zk-card-art-overlay"></div>

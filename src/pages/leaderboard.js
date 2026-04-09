@@ -55,7 +55,7 @@ export async function renderLeaderboard(app) {
         <div class="lb-row${highlight}">
           <span class="lb-rank">${medal}</span>
           <span class="lb-addr">${esc(short)} • ${esc(tier)} ${esc(rating)}</span>
-          <span class="lb-record">${wins}W / ${losses}L</span>
+          <span class="lb-record">${Number(wins)}W / ${Number(losses)}L</span>
         </div>
       `;
     }).join('');
