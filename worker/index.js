@@ -1205,10 +1205,11 @@ async function attemptMatchForTicket(env, address, ticketId) {
            AND status = 'searching'
            AND expires_at > CURRENT_TIMESTAMP
            AND ABS(rating - ?) <= CASE
-             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 45 THEN 320
-             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 30 THEN 220
-             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 15 THEN 140
-             ELSE 80
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 60 THEN 99999
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 45 THEN 500
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 30 THEN 300
+             WHEN (strftime('%s', 'now') - strftime('%s', queued_at)) >= 15 THEN 180
+             ELSE 100
            END
          ORDER BY ABS(rating - ?), ABS(bucket_key - ?), queued_at ASC
          LIMIT 1
@@ -1574,7 +1575,8 @@ async function handleGameRegister(request, env) {
   if (existing) {
     await env.DB.prepare(
       `UPDATE game_cards SET token_id = ?, name = ?, image = ?,
-       pwr = ?, def = ?, hp = ?, spd = ?, element = ?, ability = ?, rarity = ?, traits_json = ?,
+       pwr = COALESCE(?, pwr), def = COALESCE(?, def), hp = ?, spd = COALESCE(?, spd),
+       element = COALESCE(?, element), ability = COALESCE(?, ability), rarity = COALESCE(?, rarity), traits_json = ?,
        competitive_rating = COALESCE(competitive_rating, ?),
        competitive_rd = COALESCE(competitive_rd, ?),
        competitive_volatility = COALESCE(competitive_volatility, ?),
@@ -1958,10 +1960,12 @@ async function handleQueue(request, env) {
   const ticketId = crypto.randomUUID();
   const cardRow  = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
   if (!cardRow) return json({ error: 'not_registered', message: 'Register a card first' }, 400);
-  const trackLevels = await getTrackLevelsForClass(env, addr, cardRow.element);
-  const loadout  = await getCardLoadoutRecord(env, addr, card.tokenId, cardRow.element);
-  // Use DB row as authoritative source — only take tokenId from client to identify the card
-  const queuedCard = attachCardLoadout(cardRow, loadout, trackLevels, cardRow.element);
+  // DB is authoritative, but fall back to client element/tokenId if DB has nulls (legacy registrations)
+  const resolvedElement = cardRow.element || card.element || 'VOID';
+  const resolvedTokenId = cardRow.token_id || card.tokenId;
+  const trackLevels = await getTrackLevelsForClass(env, addr, resolvedElement);
+  const loadout  = await getCardLoadoutRecord(env, addr, resolvedTokenId, resolvedElement);
+  const queuedCard = attachCardLoadout({ ...cardRow, element: resolvedElement }, loadout, trackLevels, resolvedElement);
   const cardJson = JSON.stringify(queuedCard);
   const profile  = computeMatchProfile(cardRow, queuedCard);
 
