@@ -523,15 +523,13 @@ async function getPlayerProgress(env, address) {
 
 async function getTrackLevelsForClass(env, address, cardClass) {
   const normalized = normalizeCardClass(cardClass);
-  const rows = await env.DB.prepare(
-    'SELECT track_id, current_level FROM equipment_track_levels WHERE address = ? AND class_key = ? ORDER BY track_id ASC'
-  ).bind(address, normalized).all();
-
-  const levels = getFreeTrackLevels(normalized);
-  for (const row of rows.results || []) {
-    levels[row.track_id] = Math.max(1, Math.min(10, Number(row.current_level) || 1));
-  }
-  return levels;
+  // All equipment tracks are unlocked and level with the player's card level
+  const cardRow = await env.DB.prepare(
+    'SELECT level FROM game_cards WHERE address = ?'
+  ).bind(address).first();
+  const cardLevel = Math.max(1, Math.min(10, Number(cardRow?.level) || 1));
+  const catalog = getEquipmentCatalogByClass(normalized);
+  return Object.fromEntries(catalog.map((track) => [track.trackId, cardLevel]));
 }
 
 async function hasActiveQueueLock(env, address) {
@@ -1668,6 +1666,10 @@ async function handleEquipmentProgress(address, env) {
 }
 
 async function handleEquipmentPurchase(request, env) {
+  // Equipment levels are now tied to card level — no individual purchases needed
+  return json({ error: 'disabled', message: 'Equipment levels advance automatically with your card level' }, 400);
+
+  // Legacy code below — kept for reference
   const { address, classKey, trackId } = await request.json();
 
   if (!address || !isValidEthAddress(address)) {

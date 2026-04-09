@@ -74,79 +74,52 @@ function renderEquipmentContent(wrap, state) {
           <span class="equipment-summary-value">${esc(classKey)}</span>
         </div>
         <div class="equipment-summary-row">
-          <span class="equipment-summary-label">FORGE SHARDS</span>
-          <span class="equipment-summary-value">${forgeShards}</span>
+          <span class="equipment-summary-label">CARD LEVEL</span>
+          <span class="equipment-summary-value">LV ${card.level || 1}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">LOADOUT</span>
-          <span class="equipment-summary-value equipment-summary-list">${loadout.summary.map(esc).join(' • ')}</span>
+          <span class="equipment-summary-value equipment-summary-list">${loadout.summary.map(esc).join(' \u2022 ')}</span>
         </div>
         <div class="equipment-summary-row">
           <span class="equipment-summary-label">DELTA</span>
-          <span class="equipment-summary-value">PWR ${delta.pwr >= 0 ? '+' : ''}${delta.pwr} • HP ${delta.hp >= 0 ? '+' : ''}${delta.hp} • SPD ${delta.spd >= 0 ? '+' : ''}${delta.spd}</span>
+          <span class="equipment-summary-value">PWR ${delta.pwr >= 0 ? '+' : ''}${delta.pwr} \u2022 HP ${delta.hp >= 0 ? '+' : ''}${delta.hp} \u2022 SPD ${delta.spd >= 0 ? '+' : ''}${delta.spd}</span>
+        </div>
+        <div class="equipment-summary-row">
+          <span class="equipment-summary-label">INFO</span>
+          <span class="equipment-summary-value" style="font-size:0.65rem;color:var(--text-dim)">All equipment levels up with your card. Win battles to level up!</span>
         </div>
       </div>
     </div>
 
-    <div class="equipment-tab-row">
-      <button class="btn-ghost equipment-tab${activeTab === 'loadout' ? ' active' : ''}" data-tab="loadout">LOADOUT</button>
-      <button class="btn-ghost equipment-tab${activeTab === 'shop' ? ' active' : ''}" data-tab="shop">SHOP</button>
-    </div>
-
     <div class="equipment-slot-block">
-      ${activeTab === 'loadout'
-        ? ['power', 'hp', 'speed'].map((slot) => `
-          <section class="equipment-slot-panel">
-            <div class="divider">${slot.toUpperCase()} TRACKS</div>
-            <div class="equipment-grid">
-              ${groups[slot].map((track) => {
-                const current = trackLevels[track.trackId] || 1;
-                const equipped = (
-                  (slot === 'power' && loadout.powerTrackId === track.trackId) ||
-                  (slot === 'hp' && loadout.hpTrackId === track.trackId) ||
-                  (slot === 'speed' && loadout.speedTrackId === track.trackId)
-                );
-                return `
-                  <article class="equipment-item${equipped ? ' equipped' : ''}">
-                    <div class="equipment-item-head">
-                      <span class="equipment-item-code">${esc(track.code)}</span>
-                      <span class="equipment-item-name">${esc(track.familyName)} LV ${current}</span>
-                    </div>
-                    <div class="equipment-item-effects">
-                      ${(track.levels[current - 1].effects || []).map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
-                    </div>
-                    <button class="btn-gold equipment-action" data-mode="equip" data-slot="${slot}" data-track-id="${esc(track.trackId)}" ${equipped ? 'disabled' : ''}>${equipped ? 'EQUIPPED' : 'EQUIP'}</button>
-                  </article>
-                `;
-              }).join('')}
-            </div>
-          </section>
-        `).join('')
-        : ['power', 'hp', 'speed'].map((slot) => `
-          <section class="equipment-slot-panel">
-            <div class="divider">${slot.toUpperCase()} SHOP</div>
-            <div class="equipment-grid">
-              ${groups[slot].map((track) => {
-                const current = trackLevels[track.trackId] || 1;
-                const next = track.levels[current] || null;
-                return `
-                  <article class="equipment-item">
-                    <div class="equipment-item-head">
-                      <span class="equipment-item-code">${esc(track.code)}</span>
-                      <span class="equipment-item-name">${esc(track.familyName)}</span>
-                    </div>
-                    <div class="equipment-item-effects">
-                      <span class="equipment-effect-line">Current LV ${current}</span>
-                      ${(track.levels[current - 1].effects || []).map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
-                      ${next ? `<span class="equipment-effect-line equipment-next-line">Next LV ${next.level}: ${esc(next.effects[0] || 'Upgrade')}</span>` : '<span class="equipment-effect-line equipment-next-line">MAX LEVEL</span>'}
-                    </div>
-                    <button class="btn-gold equipment-action" data-mode="buy" data-track-id="${esc(track.trackId)}" ${!next ? 'disabled' : ''}>${next ? `BUY LV ${next.level} • ${next.price}` : 'MAXED'}</button>
-                  </article>
-                `;
-              }).join('')}
-            </div>
-          </section>
-        `).join('')}
+      ${['power', 'hp', 'speed'].map((slot) => `
+        <section class="equipment-slot-panel">
+          <div class="divider">${slot.toUpperCase()} TRACKS</div>
+          <div class="equipment-grid">
+            ${groups[slot].map((track) => {
+              const current = trackLevels[track.trackId] || 1;
+              const equipped = (
+                (slot === 'power' && loadout.powerTrackId === track.trackId) ||
+                (slot === 'hp' && loadout.hpTrackId === track.trackId) ||
+                (slot === 'speed' && loadout.speedTrackId === track.trackId)
+              );
+              return `
+                <article class="equipment-item${equipped ? ' equipped' : ''}">
+                  <div class="equipment-item-head">
+                    <span class="equipment-item-code">${esc(track.code)}</span>
+                    <span class="equipment-item-name">${esc(track.familyName)} LV ${current}</span>
+                  </div>
+                  <div class="equipment-item-effects">
+                    ${(track.levels[current - 1].effects || []).map((effect) => `<span class="equipment-effect-line">${esc(effect)}</span>`).join('')}
+                  </div>
+                  <button class="btn-gold equipment-action" data-mode="equip" data-slot="${slot}" data-track-id="${esc(track.trackId)}" ${equipped ? 'disabled' : ''}>${equipped ? 'EQUIPPED' : 'EQUIP'}</button>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      `).join('')}
     </div>
 
     <div class="profile-nav">
