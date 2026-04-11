@@ -62,6 +62,23 @@ export async function cancelQueue(address, ticketId) {
   return apiPost('/api/game/queue/cancel', { address, ticketId });
 }
 
+export async function createLobby(address, card) {
+  return apiPost('/api/game/lobby/create', { address, card });
+}
+
+export async function joinLobby(address, code, card) {
+  return apiPost('/api/game/lobby/join', { address, code, card });
+}
+
+export async function getLobbyStatus(code, address) {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : '';
+  return apiGet(`/api/game/lobby/${encodeURIComponent(code)}${qs}`);
+}
+
+export async function cancelLobby(address, code) {
+  return apiPost('/api/game/lobby/cancel', { address, code });
+}
+
 export async function getLeaderboard() {
   return apiGet('/api/game/leaderboard');
 }

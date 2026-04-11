@@ -2094,3 +2094,186 @@ a.zk-card-id {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Mode select (Ranked vs Friend Match) ──────────────────────────────── */
+
+.mode-select {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 32px 16px 40px;
+  flex: 1;
+}
+
+.mode-select-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  letter-spacing: 4px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.mode-select-subtitle {
+  font-size: 0.72rem;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 320px;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.mode-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 16px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px 18px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-fg);
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  text-align: left;
+  font: inherit;
+}
+
+.mode-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 200, 100, 0.45);
+  background: rgba(255, 200, 100, 0.06);
+}
+
+.mode-card-label {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 3px;
+  color: var(--text-fg);
+}
+
+.mode-card-desc {
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.mode-card-tag {
+  font-size: 0.58rem;
+  letter-spacing: 2px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(255, 200, 100, 0.12);
+  color: #ffd58a;
+  text-transform: uppercase;
+}
+
+/* ── Friend Match sub-screens ──────────────────────────────────────────── */
+
+.friend-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 16px 40px;
+  flex: 1;
+}
+
+.friend-panel-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 4px;
+  color: var(--text-fg);
+}
+
+.friend-panel-sub {
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 320px;
+  line-height: 1.55;
+}
+
+.friend-action-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.friend-action-row .btn-gold,
+.friend-action-row .btn-ghost {
+  min-width: 150px;
+}
+
+.room-code-display {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  letter-spacing: 10px;
+  color: #ffd58a;
+  padding: 16px 24px;
+  border-radius: 10px;
+  background: rgba(255, 200, 100, 0.08);
+  border: 1px solid rgba(255, 200, 100, 0.35);
+  text-shadow: 0 0 20px rgba(255, 200, 100, 0.25);
+  user-select: all;
+}
+
+.room-code-hint {
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.55;
+}
+
+.room-code-status {
+  font-size: 0.68rem;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
+.room-code-input {
+  width: 220px;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  letter-spacing: 8px;
+  text-align: center;
+  padding: 12px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  outline: none;
+}
+
+.room-code-input:focus {
+  border-color: rgba(255, 200, 100, 0.55);
+}
+
+.friend-error {
+  font-size: 0.7rem;
+  color: #ff6b8a;
+  letter-spacing: 0.5px;
+  min-height: 16px;
+}
+
+@media (max-width: 520px) {
+  .mode-card-grid {
+    grid-template-columns: 1fr;
+    max-width: 320px;
+  }
+}

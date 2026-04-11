@@ -5,7 +5,7 @@
 import { navigate }              from '../router.js';
 import { buildCardHTML, buildCardBack, deriveStats } from './card.js';
 import { playBattleHit, playVictory, playDefeat }   from '../sound.js';
-import { syncCard, enterQueue, pollQueue, cancelQueue } from '../api.js';
+import { syncCard, enterQueue, pollQueue, cancelQueue, createLobby, joinLobby, getLobbyStatus, cancelLobby } from '../api.js';
 import { resolveBattle, calcXP, NPC_OPPONENTS }      from '../traits.js';
 import { buildEquipmentCardView, getForgeShardReward, getFreeTrackLevels, getStarterLoadout } from '../game/equipment-system.js';
 
@@ -45,9 +45,10 @@ export function renderArena(app) {
 
   const wrap = document.createElement('div');
   wrap.className = 'arena-wrap';
-  wrap.innerHTML = `
+
+  const buildHeader = (backLabel, backHandler) => `
     <div class="arena-header">
-      <button class="btn-ghost arena-back" id="btn-back">\u2190 BACK</button>
+      <button class="btn-ghost arena-back" id="btn-back">${esc(backLabel)}</button>
       <div class="brand-logo arena-logo">ZENKAI</div>
       <div class="arena-wallet-row">
         <span class="arena-addr">${esc(address.slice(0,6))}…${esc(address.slice(-4))}</span>
@@ -55,7 +56,44 @@ export function renderArena(app) {
         <button class="btn-ghost arena-disconnect" id="btn-disconnect">DISCONNECT</button>
       </div>
     </div>
+  `;
 
+  const attachHeaderHandlers = (onBack) => {
+    wrap.querySelector('#btn-back').addEventListener('click', onBack);
+    wrap.querySelector('#btn-disconnect').addEventListener('click', () => {
+      localStorage.removeItem('zenkai_wallet');
+      localStorage.removeItem('zenkai_card');
+      navigate('/');
+    });
+    wrap.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
+  };
+
+  const renderModeSelect = () => {
+    wrap.innerHTML = `
+      ${buildHeader('\u2190 BACK', null)}
+      <div class="mode-select" id="mode-select">
+        <div class="mode-select-title">CHOOSE MODE</div>
+        <p class="mode-select-subtitle">Climb the ladder in Ranked or battle a friend directly in Friend Match.</p>
+        <div class="mode-card-grid">
+          <button class="mode-card" id="btn-mode-ranked" data-testid="mode-ranked">
+            <span class="mode-card-tag">COMPETITIVE</span>
+            <span class="mode-card-label">RANKED</span>
+            <span class="mode-card-desc">Queue against a player near your rating. Wins and losses count toward your record.</span>
+          </button>
+          <button class="mode-card" id="btn-mode-friend" data-testid="mode-friend">
+            <span class="mode-card-tag">PRIVATE</span>
+            <span class="mode-card-label">FRIEND MATCH</span>
+            <span class="mode-card-desc">Create a room code or join one. Battle a specific friend without entering the queue.</span>
+          </button>
+        </div>
+      </div>
+    `;
+    attachHeaderHandlers(() => navigate('/home'));
+    wrap.querySelector('#btn-mode-ranked').addEventListener('click', () => renderRanked());
+    wrap.querySelector('#btn-mode-friend').addEventListener('click', () => renderFriendRoot());
+  };
+
+  const buildArenaScene = () => `
     <div class="arena-scene" id="arena-scene">
       <div class="arena-slot arena-slot-player" id="slot-player">
         <div class="arena-slot-label">YOU</div>
@@ -79,48 +117,314 @@ export function renderArena(app) {
 
     <div class="arena-record" id="arena-record"></div>
   `;
+
+  const writeRecord = () => {
+    const wins   = Number(myCard.wins ?? localStorage.getItem('zenkai_wins') ?? 0);
+    const losses = Number(myCard.losses ?? localStorage.getItem('zenkai_losses') ?? 0);
+    wrap.querySelector('#arena-record').innerHTML =
+      `<span class="record-label">RECORD</span>
+       <span class="record-wins">${wins}W</span>
+       <span class="record-sep">/</span>
+       <span class="record-losses">${losses}L</span>`;
+  };
+
+  const renderRanked = () => {
+    wrap.innerHTML = buildHeader('\u2190 BACK', null) + buildArenaScene();
+    attachHeaderHandlers(() => renderModeSelect());
+    writeRecord();
+
+    wrap.querySelector('#btn-battle').onclick = () => startBattle(wrap, myCard, address);
+
+    // Resume queue if user navigated away and came back while still in queue
+    if (HAS_SERVER) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('zenkai_queue') || 'null');
+        if (saved && saved.address === address && saved.ticketId && (Date.now() - saved.startedAt) < 90000) {
+          pollQueue(address, saved.ticketId).then((data) => {
+            if (data.status === 'matched') {
+              localStorage.removeItem('zenkai_queue');
+              startBattle(wrap, myCard, address);
+            } else if (data.status === 'waiting') {
+              startBattle(wrap, myCard, address);
+            } else {
+              localStorage.removeItem('zenkai_queue');
+            }
+          }).catch(() => localStorage.removeItem('zenkai_queue'));
+        } else {
+          localStorage.removeItem('zenkai_queue');
+        }
+      } catch { localStorage.removeItem('zenkai_queue'); }
+    }
+  };
+
+  const renderFriendRoot = () => {
+    wrap.innerHTML = `
+      ${buildHeader('\u2190 BACK', null)}
+      <div class="friend-panel" id="friend-root">
+        <div class="friend-panel-title">FRIEND MATCH</div>
+        <p class="friend-panel-sub">Create a room and share the code with a friend, or join a room with a code they shared.</p>
+        <div class="friend-action-row">
+          <button class="btn-gold" id="btn-create-room" data-testid="create-room">CREATE ROOM</button>
+          <button class="btn-ghost" id="btn-join-room" data-testid="join-room">JOIN ROOM</button>
+        </div>
+      </div>
+    `;
+    attachHeaderHandlers(() => renderModeSelect());
+    wrap.querySelector('#btn-create-room').addEventListener('click', () => renderCreateRoom());
+    wrap.querySelector('#btn-join-room').addEventListener('click', () => renderJoinRoom());
+  };
+
+  const renderCreateRoom = () => {
+    if (!HAS_SERVER) {
+      renderFriendError('Friend Match requires a live server');
+      return;
+    }
+    wrap.innerHTML = `
+      ${buildHeader('\u2190 BACK', null)}
+      <div class="friend-panel" id="friend-create">
+        <div class="friend-panel-title">ROOM CODE</div>
+        <p class="friend-panel-sub">Share this code with a friend so they can join. The battle starts automatically once they arrive.</p>
+        <div class="room-code-display" id="room-code" data-testid="room-code">\u2026</div>
+        <p class="room-code-hint" id="room-code-hint">Creating room\u2026</p>
+        <div class="room-code-status" id="room-code-status"></div>
+        <div class="friend-action-row">
+          <button class="btn-ghost" id="btn-cancel-room" data-testid="cancel-room">CANCEL</button>
+        </div>
+        <div class="friend-error" id="friend-error"></div>
+      </div>
+    `;
+    attachHeaderHandlers(() => {
+      if (createSession.code) cancelLobby(address, createSession.code).catch(() => {});
+      createSession.cancelled = true;
+      renderFriendRoot();
+    });
+
+    const codeEl = wrap.querySelector('#room-code');
+    const hintEl = wrap.querySelector('#room-code-hint');
+    const statusEl = wrap.querySelector('#room-code-status');
+    const errorEl = wrap.querySelector('#friend-error');
+    const cancelBtn = wrap.querySelector('#btn-cancel-room');
+
+    const createSession = { code: null, cancelled: false };
+
+    cancelBtn.addEventListener('click', async () => {
+      createSession.cancelled = true;
+      if (createSession.code) {
+        try { await cancelLobby(address, createSession.code); } catch {}
+      }
+      renderFriendRoot();
+    });
+
+    (async () => {
+      try {
+        await syncCard(address, myCard);
+        const result = await createLobby(address, myCard);
+        if (createSession.cancelled) return;
+        if (result?.error || !result?.code) {
+          errorEl.textContent = result?.message || 'Could not create room';
+          hintEl.textContent = 'Try again in a moment.';
+          return;
+        }
+        createSession.code = result.code;
+        codeEl.textContent = result.code;
+        hintEl.textContent = 'Waiting for your friend to join\u2026';
+        statusEl.textContent = `Room open \u2022 ${result.code}`;
+
+        // Poll for guest arrival
+        const startedAt = Date.now();
+        const poll = async () => {
+          if (createSession.cancelled) return;
+          if (Date.now() - startedAt > 600000) {
+            errorEl.textContent = 'Room expired';
+            return;
+          }
+          try {
+            const status = await getLobbyStatus(result.code, address);
+            if (createSession.cancelled) return;
+            if (status.status === 'matched' && status.rounds) {
+              // Battle resolved — render battle scene and replay
+              replayLobbyBattle(status);
+              return;
+            }
+            if (status.status === 'open' || status.status === 'matching') {
+              const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+              statusEl.textContent = `Waiting\u2026 ${elapsed}s`;
+              setTimeout(poll, 2000);
+              return;
+            }
+            if (status.status === 'cancelled' || status.status === 'expired') {
+              errorEl.textContent = status.status === 'expired' ? 'Room expired' : 'Room cancelled';
+              return;
+            }
+            setTimeout(poll, 2000);
+          } catch {
+            if (!createSession.cancelled) setTimeout(poll, 2500);
+          }
+        };
+        setTimeout(poll, 2000);
+      } catch (err) {
+        errorEl.textContent = 'Could not create room';
+      }
+    })();
+  };
+
+  const renderJoinRoom = () => {
+    if (!HAS_SERVER) {
+      renderFriendError('Friend Match requires a live server');
+      return;
+    }
+    wrap.innerHTML = `
+      ${buildHeader('\u2190 BACK', null)}
+      <div class="friend-panel" id="friend-join">
+        <div class="friend-panel-title">JOIN ROOM</div>
+        <p class="friend-panel-sub">Enter the 6-digit code your friend shared to start the battle.</p>
+        <input class="room-code-input" id="room-code-input" data-testid="room-code-input" type="text" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" />
+        <div class="friend-action-row">
+          <button class="btn-gold" id="btn-join-submit" data-testid="join-submit">JOIN</button>
+          <button class="btn-ghost" id="btn-join-back">BACK</button>
+        </div>
+        <div class="friend-error" id="friend-error"></div>
+      </div>
+    `;
+    attachHeaderHandlers(() => renderFriendRoot());
+
+    const input = wrap.querySelector('#room-code-input');
+    const submit = wrap.querySelector('#btn-join-submit');
+    const backBtn = wrap.querySelector('#btn-join-back');
+    const errorEl = wrap.querySelector('#friend-error');
+
+    backBtn.addEventListener('click', () => renderFriendRoot());
+    input.focus();
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/[^0-9]/g, '').slice(0, 6);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit.click();
+    });
+
+    submit.addEventListener('click', async () => {
+      const code = input.value.trim();
+      if (!/^[0-9]{4,8}$/.test(code)) {
+        errorEl.textContent = 'Enter a valid 6-digit code';
+        return;
+      }
+      errorEl.textContent = '';
+      submit.disabled = true;
+      submit.textContent = 'JOINING\u2026';
+      try {
+        await syncCard(address, myCard);
+        const result = await joinLobby(address, code, myCard);
+        if (result?.error) {
+          errorEl.textContent = result.message || 'Could not join room';
+          submit.disabled = false;
+          submit.textContent = 'JOIN';
+          return;
+        }
+        if (result?.status === 'matched' && result.rounds) {
+          replayLobbyBattle(result);
+          return;
+        }
+        errorEl.textContent = 'Unexpected response. Try again.';
+        submit.disabled = false;
+        submit.textContent = 'JOIN';
+      } catch {
+        errorEl.textContent = 'Network error';
+        submit.disabled = false;
+        submit.textContent = 'JOIN';
+      }
+    });
+  };
+
+  const renderFriendError = (message) => {
+    wrap.innerHTML = `
+      ${buildHeader('\u2190 BACK', null)}
+      <div class="friend-panel">
+        <div class="friend-panel-title">FRIEND MATCH</div>
+        <p class="friend-error">${esc(message)}</p>
+        <div class="friend-action-row">
+          <button class="btn-ghost" id="btn-friend-back">BACK</button>
+        </div>
+      </div>
+    `;
+    attachHeaderHandlers(() => renderModeSelect());
+    wrap.querySelector('#btn-friend-back').addEventListener('click', () => renderModeSelect());
+  };
+
+  const replayLobbyBattle = async (result) => {
+    wrap.innerHTML = buildHeader('\u2190 BACK', null) + buildArenaScene();
+    attachHeaderHandlers(() => renderModeSelect());
+    writeRecord();
+
+    const btn     = wrap.querySelector('#btn-battle');
+    const log     = wrap.querySelector('#battle-log');
+    const slotOpp = wrap.querySelector('#slot-opponent');
+    const slotMe  = wrap.querySelector('#slot-player');
+
+    btn.disabled    = true;
+    btn.textContent = 'OPPONENT FOUND!';
+    log.innerHTML   = '';
+
+    const opp = { ...result.opponent.card, level: result.opponent.card?.level || 1, xp: result.opponent.card?.xp || 0 };
+    slotOpp.innerHTML = `<div class="arena-slot-label">OPPONENT</div>${buildCardHTML(opp)}`;
+    slotOpp.querySelector('.zk-card').classList.add('zk-reveal-anim');
+
+    await wait(1000);
+    await animateRounds(log, slotMe, slotOpp, result.rounds);
+    await wait(800);
+
+    const won  = result.winner === 'p1';
+    const draw = result.winner === 'draw';
+    const previousForgeShards = parseInt(localStorage.getItem('zenkai_forge_shards') || String(myCard.forge_shards || 0), 10) || 0;
+
+    if (won) playVictory(); else if (!draw) playDefeat();
+
+    if (result.card) {
+      myCard.level = result.card.level;
+      myCard.xp    = result.card.xp;
+      myCard.wins = result.card.wins ?? myCard.wins;
+      myCard.losses = result.card.losses ?? myCard.losses;
+      myCard.hp = result.card.hp ?? myCard.hp;
+      myCard.equipmentLoadout = result.card.equipmentLoadout || myCard.equipmentLoadout;
+      myCard.equipmentLevels = result.card.equipmentLevels || myCard.equipmentLevels;
+      myCard.forge_shards = result.card.forge_shards ?? myCard.forge_shards;
+      myCard.competitive_rating = result.card.competitive_rating ?? myCard.competitive_rating;
+      myCard.competitive_tier = result.card.competitive_tier ?? myCard.competitive_tier;
+      myCard.competitive_matches = result.card.competitive_matches ?? myCard.competitive_matches;
+      if (result.card.forge_shards != null) {
+        localStorage.setItem('zenkai_forge_shards', String(result.card.forge_shards));
+      }
+      localStorage.setItem('zenkai_card', JSON.stringify(myCard));
+    }
+
+    const totalWins   = result.card?.wins   ?? parseInt(localStorage.getItem('zenkai_wins')   || '0');
+    const totalLosses = result.card?.losses ?? parseInt(localStorage.getItem('zenkai_losses') || '0');
+    localStorage.setItem('zenkai_wins', String(totalWins));
+    localStorage.setItem('zenkai_losses', String(totalLosses));
+
+    showFinalResult(log, won, draw, myCard, opp, undefined, result.card?.forge_shards != null ? (result.card.forge_shards - previousForgeShards) : undefined);
+    updateRecordDisplay(wrap, totalWins, totalLosses);
+
+    slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
+    btn.disabled = false;
+    btn.textContent = 'BACK TO MODES';
+    btn.onclick = () => renderModeSelect();
+  };
+
   app.appendChild(wrap);
 
-  wrap.querySelector('#btn-back').addEventListener('click', () => navigate('/home'));
-  wrap.querySelector('#btn-disconnect').addEventListener('click', () => {
-    localStorage.removeItem('zenkai_wallet');
-    localStorage.removeItem('zenkai_card');
-    navigate('/');
-  });
-
-  wrap.querySelector('#btn-profile').addEventListener('click', () => navigate('/profile'));
-
-  const wins   = Number(myCard.wins ?? localStorage.getItem('zenkai_wins') ?? 0);
-  const losses = Number(myCard.losses ?? localStorage.getItem('zenkai_losses') ?? 0);
-  wrap.querySelector('#arena-record').innerHTML =
-    `<span class="record-label">RECORD</span>
-     <span class="record-wins">${wins}W</span>
-     <span class="record-sep">/</span>
-     <span class="record-losses">${losses}L</span>`;
-
-  wrap.querySelector('#btn-battle').onclick = () => startBattle(wrap, myCard, address);
-
-  // Resume queue if user navigated away and came back while still in queue
+  // If an active queue resume is already pending, skip mode select and go
+  // straight into ranked so the player sees their in-progress search.
   if (HAS_SERVER) {
     try {
       const saved = JSON.parse(localStorage.getItem('zenkai_queue') || 'null');
       if (saved && saved.address === address && saved.ticketId && (Date.now() - saved.startedAt) < 90000) {
-        pollQueue(address, saved.ticketId).then((data) => {
-          if (data.status === 'matched') {
-            localStorage.removeItem('zenkai_queue');
-            // Auto-resume the matched battle
-            startBattle(wrap, myCard, address);
-          } else if (data.status === 'waiting') {
-            startBattle(wrap, myCard, address);
-          } else {
-            localStorage.removeItem('zenkai_queue');
-          }
-        }).catch(() => localStorage.removeItem('zenkai_queue'));
-      } else {
-        localStorage.removeItem('zenkai_queue');
+        renderRanked();
+        return;
       }
-    } catch { localStorage.removeItem('zenkai_queue'); }
+    } catch {}
   }
+
+  renderModeSelect();
 }
 
 // ── Battle sequence ──────────────────────────────────────────────────────────

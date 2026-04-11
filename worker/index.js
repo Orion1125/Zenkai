@@ -814,6 +814,22 @@ async function ensureMatchmakingSchema(env) {
              PRIMARY KEY (address, token_id)
            )`
         ),
+        env.DB.prepare(
+          `CREATE TABLE IF NOT EXISTS private_lobbies (
+             code TEXT PRIMARY KEY,
+             host_address TEXT NOT NULL,
+             host_card_json TEXT NOT NULL,
+             host_ticket_id TEXT NOT NULL,
+             guest_address TEXT,
+             guest_ticket_id TEXT,
+             status TEXT NOT NULL DEFAULT 'open',
+             match_id TEXT,
+             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             matched_at DATETIME,
+             expires_at DATETIME,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+           )`
+        ),
       ]);
 
       const [queueInfo, battleInfo, cardInfo] = await env.DB.batch([
@@ -1469,6 +1485,20 @@ export default {
         const address  = path.split('/').pop().toLowerCase();
         const ticketId = url.searchParams.get('ticketId') || null;
         return handleQueueStatus(address, ticketId, env);
+      }
+
+      // ── Game: Private lobby (Friend Match) ────────────────────────────────
+      if (method === 'POST' && path === '/api/game/lobby/create') {
+        return handleLobbyCreate(request, env);
+      }
+      if (method === 'POST' && path === '/api/game/lobby/join') {
+        return handleLobbyJoin(request, env);
+      }
+      if (method === 'POST' && path === '/api/game/lobby/cancel') {
+        return handleLobbyCancel(request, env);
+      }
+      if (method === 'GET' && /^\/api\/game\/lobby\/[0-9]{4,8}$/.test(path)) {
+        return handleLobbyStatus(request, env, url);
       }
 
       // ── Game: Leaderboard ─────────────────────────────────────────────────
@@ -2213,6 +2243,259 @@ async function handleQueueCancel(request, env) {
     status: removed ? 'cancelled' : 'waiting',
     ticketId: queueRow.ticket_id,
   });
+}
+
+// ── Private lobbies (Friend Match) ─────────────────────────────────────────
+
+const PRIVATE_LOBBY_TTL_SECONDS = 600;
+
+async function cleanupPrivateLobbies(env) {
+  try {
+    await env.DB.prepare(
+      `UPDATE private_lobbies
+          SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < datetime('now')`
+    ).run();
+  } catch {}
+}
+
+async function generateUniqueLobbyCode(env) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const code = String(100000 + Math.floor(Math.random() * 900000));
+    const existing = await env.DB.prepare(
+      "SELECT code FROM private_lobbies WHERE code = ? AND status IN ('open', 'matched')"
+    ).bind(code).first();
+    if (!existing) return code;
+  }
+  // Extremely unlikely, but fall back to UUID suffix of digits
+  const fallback = String(Date.now()).slice(-6);
+  return fallback;
+}
+
+async function buildQueuedCardSnapshot(env, addr, clientCard) {
+  const cardRow = await env.DB.prepare('SELECT * FROM game_cards WHERE address = ?').bind(addr).first();
+  if (!cardRow) return null;
+  const resolvedElement = cardRow.element || clientCard?.element || 'VOID';
+  const resolvedTokenId = cardRow.token_id || clientCard?.tokenId;
+  const trackLevels = await getTrackLevelsForClass(env, addr, resolvedElement);
+  const loadout = await getCardLoadoutRecord(env, addr, resolvedTokenId, resolvedElement);
+  return attachCardLoadout({ ...cardRow, element: resolvedElement }, loadout, trackLevels, resolvedElement);
+}
+
+function synthLobbyQueueRow(address, ticketId, cardJson) {
+  return {
+    address,
+    ticket_id: ticketId,
+    card_json: cardJson,
+  };
+}
+
+async function handleLobbyCreate(request, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupPrivateLobbies(env);
+
+  const { address, card } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+  if (!card || !card.tokenId) {
+    return json({ error: 'invalid', message: 'Card is required for lobby' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const hostCard = await buildQueuedCardSnapshot(env, addr, card);
+  if (!hostCard) {
+    return json({ error: 'not_registered', message: 'Register a card first' }, 400);
+  }
+
+  // Close any previous open lobbies from this host so stale codes can't collide
+  await env.DB.prepare(
+    `UPDATE private_lobbies
+        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+      WHERE host_address = ? AND status = 'open'`
+  ).bind(addr).run();
+
+  const code = await generateUniqueLobbyCode(env);
+  const ticketId = crypto.randomUUID();
+
+  await env.DB.prepare(
+    `INSERT INTO private_lobbies (
+       code, host_address, host_card_json, host_ticket_id, status,
+       created_at, expires_at, updated_at
+     ) VALUES (
+       ?, ?, ?, ?, 'open',
+       CURRENT_TIMESTAMP,
+       datetime('now', '+${PRIVATE_LOBBY_TTL_SECONDS} seconds'),
+       CURRENT_TIMESTAMP
+     )`
+  ).bind(code, addr, JSON.stringify(hostCard), ticketId).run();
+
+  return json({ status: 'open', code, ticketId, expiresInSeconds: PRIVATE_LOBBY_TTL_SECONDS });
+}
+
+async function handleLobbyJoin(request, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupPrivateLobbies(env);
+
+  const { address, card, code } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+  if (!card || !card.tokenId) {
+    return json({ error: 'invalid', message: 'Card is required for lobby' }, 400);
+  }
+  const normalizedCode = String(code || '').trim();
+  if (!/^[0-9]{4,8}$/.test(normalizedCode)) {
+    return json({ error: 'invalid_code', message: 'Enter the 6-digit room code' }, 400);
+  }
+
+  const guestAddr = address.toLowerCase();
+  const lobby = await env.DB.prepare(
+    "SELECT * FROM private_lobbies WHERE code = ? LIMIT 1"
+  ).bind(normalizedCode).first();
+
+  if (!lobby) {
+    return json({ error: 'not_found', message: 'Room not found' }, 404);
+  }
+  if (lobby.status === 'matched' || lobby.status === 'resolved') {
+    return json({ error: 'already_started', message: 'This room has already started' }, 409);
+  }
+  if (lobby.status !== 'open') {
+    return json({ error: 'not_open', message: 'This room is no longer open' }, 409);
+  }
+  if (lobby.host_address === guestAddr) {
+    return json({ error: 'self_join', message: 'Cannot join your own room' }, 400);
+  }
+
+  const guestCard = await buildQueuedCardSnapshot(env, guestAddr, card);
+  if (!guestCard) {
+    return json({ error: 'not_registered', message: 'Register a card first' }, 400);
+  }
+
+  const guestTicketId = crypto.randomUUID();
+  const battleId = crypto.randomUUID();
+
+  // Claim the lobby atomically: only one join wins
+  const claim = await env.DB.prepare(
+    `UPDATE private_lobbies
+        SET status = 'matched',
+            guest_address = ?,
+            guest_ticket_id = ?,
+            match_id = ?,
+            matched_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE code = ? AND status = 'open'`
+  ).bind(guestAddr, guestTicketId, battleId, normalizedCode).run();
+
+  const claimed = Number(claim.meta?.changes || claim.meta?.rows_written || 0) > 0;
+  if (!claimed) {
+    return json({ error: 'race', message: 'Room just filled up' }, 409);
+  }
+
+  // Guest is p1 (the one calling, same convention as the queue flow).
+  // Host is p2 from the guest's perspective.
+  const selfQueueRow = synthLobbyQueueRow(guestAddr, guestTicketId, JSON.stringify(guestCard));
+  const opponentQueueRow = synthLobbyQueueRow(lobby.host_address, lobby.host_ticket_id, lobby.host_card_json);
+
+  let payload;
+  try {
+    payload = await resolveQueuedBattle(env, selfQueueRow, opponentQueueRow, battleId);
+  } catch (error) {
+    await env.DB.prepare(
+      `UPDATE private_lobbies
+          SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+        WHERE code = ? AND match_id = ?`
+    ).bind(normalizedCode, battleId).run();
+    return json({ error: 'battle_failed', message: 'Failed to start battle' }, 500);
+  }
+
+  await env.DB.prepare(
+    `UPDATE private_lobbies
+        SET status = 'resolved', updated_at = CURRENT_TIMESTAMP
+      WHERE code = ? AND match_id = ?`
+  ).bind(normalizedCode, battleId).run();
+
+  return json(payload);
+}
+
+async function handleLobbyStatus(request, env, url) {
+  await ensureMatchmakingSchema(env);
+  await cleanupPrivateLobbies(env);
+
+  const code = url.pathname.split('/').pop();
+  const address = (url.searchParams.get('address') || '').toLowerCase();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+  if (!/^[0-9]{4,8}$/.test(String(code || ''))) {
+    return json({ error: 'invalid_code', message: 'Invalid code' }, 400);
+  }
+
+  const lobby = await env.DB.prepare(
+    "SELECT * FROM private_lobbies WHERE code = ? LIMIT 1"
+  ).bind(code).first();
+
+  if (!lobby) {
+    return json({ status: 'not_found', code });
+  }
+  if (lobby.host_address !== address && lobby.guest_address !== address) {
+    return json({ error: 'forbidden', message: 'Not a participant in this room' }, 403);
+  }
+
+  if (lobby.status === 'open') {
+    return json({ status: 'open', code, ticketId: lobby.host_ticket_id });
+  }
+
+  if (lobby.status === 'matched' || lobby.status === 'resolved') {
+    const battle = await env.DB.prepare(
+      'SELECT * FROM battles WHERE id = ? LIMIT 1'
+    ).bind(lobby.match_id).first();
+
+    if (!battle) {
+      // Match is assembling — tell client to keep polling
+      return json({ status: 'matching', code, ticketId: lobby.host_ticket_id });
+    }
+
+    const myCard = await env.DB.prepare(
+      'SELECT * FROM game_cards WHERE address = ?'
+    ).bind(address).first();
+    const progress = await getPlayerProgress(env, address);
+
+    return json(buildResolvedBattlePayload(
+      battle,
+      address,
+      myCard ? { ...myCard, forge_shards: Number(progress?.forge_shards || 0) } : myCard
+    ));
+  }
+
+  return json({ status: lobby.status || 'expired', code });
+}
+
+async function handleLobbyCancel(request, env) {
+  await ensureMatchmakingSchema(env);
+  await cleanupPrivateLobbies(env);
+
+  const { address, code } = await request.json();
+
+  if (!address || !isValidEthAddress(address)) {
+    return json({ error: 'invalid', message: 'Invalid address' }, 400);
+  }
+  if (!/^[0-9]{4,8}$/.test(String(code || ''))) {
+    return json({ error: 'invalid_code', message: 'Invalid code' }, 400);
+  }
+
+  const addr = address.toLowerCase();
+  const result = await env.DB.prepare(
+    `UPDATE private_lobbies
+        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+      WHERE code = ? AND host_address = ? AND status = 'open'`
+  ).bind(code, addr).run();
+
+  const cancelled = Number(result.meta?.changes || result.meta?.rows_written || 0) > 0;
+  return json({ status: cancelled ? 'cancelled' : 'not_open', code });
 }
 
 async function handleProfileUpsert(request, env) {

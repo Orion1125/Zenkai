@@ -150,3 +150,23 @@ CREATE TABLE IF NOT EXISTS card_loadouts (
 
 CREATE INDEX IF NOT EXISTS idx_equipment_track_levels_class_key ON equipment_track_levels(address, class_key);
 CREATE INDEX IF NOT EXISTS idx_card_loadouts_address ON card_loadouts(address, token_id);
+
+-- ── Private lobbies (Friend Match) ───────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS private_lobbies (
+  code             TEXT PRIMARY KEY,
+  host_address     TEXT NOT NULL,
+  host_card_json   TEXT NOT NULL,
+  host_ticket_id   TEXT NOT NULL,
+  guest_address    TEXT,
+  guest_ticket_id  TEXT,
+  status           TEXT NOT NULL DEFAULT 'open',
+  match_id         TEXT,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  matched_at       DATETIME,
+  expires_at       DATETIME DEFAULT (datetime('now', '+600 seconds')),
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_private_lobbies_host ON private_lobbies(host_address, status);
+CREATE INDEX IF NOT EXISTS idx_private_lobbies_status_expires ON private_lobbies(status, expires_at);
