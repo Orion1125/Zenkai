@@ -21,6 +21,8 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8787',
   'https://zenkai.io',
   'https://www.zenkai.io',
+  'https://zenkai.art',
+  'https://www.zenkai.art',
   'https://zenkai.pages.dev',
   'https://zenkai-omega.vercel.app',
 ];
