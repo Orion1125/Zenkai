@@ -1367,6 +1367,21 @@ a.zk-card-id {
   padding: 11px 16px !important;
 }
 
+.post-battle-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  max-width: 200px;
+}
+
+.post-battle-actions .arena-battle-btn {
+  width: 100% !important;
+  font-size: 0.75rem !important;
+  padding: 10px 12px !important;
+}
+
 /* Battle log */
 .battle-log {
   display: flex;

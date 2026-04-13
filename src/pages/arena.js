@@ -103,6 +103,10 @@ export function renderArena(app) {
       <div class="arena-center" id="arena-center">
         <div class="vs-badge" id="vs-badge">VS</div>
         <button class="btn-gold arena-battle-btn" id="btn-battle">FIND BATTLE</button>
+        <div class="post-battle-actions" id="post-battle-actions" style="display:none">
+          <button class="btn-gold arena-battle-btn" id="btn-new-opponent">FIND NEW OPPONENT</button>
+          <button class="btn-ghost arena-battle-btn" id="btn-back-menu">BACK TO MENU</button>
+        </div>
         <div class="battle-log" id="battle-log"></div>
       </div>
 
@@ -132,6 +136,7 @@ export function renderArena(app) {
     wrap.innerHTML = buildHeader('\u2190 BACK', null) + buildArenaScene();
     attachHeaderHandlers(() => renderModeSelect());
     writeRecord();
+    wrap._renderModeSelect = renderModeSelect;
 
     wrap.querySelector('#btn-battle').onclick = () => startBattle(wrap, myCard, address);
 
@@ -503,9 +508,22 @@ async function startBattleServer(wrap, myCard, address) {
 
   slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
 
-  btn.disabled    = false;
-  btn.textContent = 'BATTLE AGAIN';
-  btn.onclick = () => { log.innerHTML = ''; startBattle(wrap, myCard, address); };
+  const postActions = wrap.querySelector('#post-battle-actions');
+  const btnNewOpp   = wrap.querySelector('#btn-new-opponent');
+  const btnBackMenu = wrap.querySelector('#btn-back-menu');
+  btn.style.display = 'none';
+  postActions.style.display = '';
+  btnNewOpp.onclick = () => {
+    postActions.style.display = 'none';
+    btn.style.display = '';
+    log.innerHTML = '';
+    startBattle(wrap, myCard, address);
+  };
+  btnBackMenu.onclick = () => {
+    postActions.style.display = 'none';
+    btn.style.display = '';
+    wrap._renderModeSelect();
+  };
 }
 
 async function startBattleServerV2(wrap, myCard, address) {
@@ -513,10 +531,30 @@ async function startBattleServerV2(wrap, myCard, address) {
   const log     = wrap.querySelector('#battle-log');
   const slotOpp = wrap.querySelector('#slot-opponent');
   const slotMe  = wrap.querySelector('#slot-player');
+  const postActions = wrap.querySelector('#post-battle-actions');
+  const btnNewOpp   = wrap.querySelector('#btn-new-opponent');
+  const btnBackMenu = wrap.querySelector('#btn-back-menu');
   const resetBattleButton = (label = 'FIND BATTLE') => {
     btn.disabled = false;
     btn.textContent = label;
     btn.onclick = () => startBattle(wrap, myCard, address);
+    // Hide post-battle row when re-entering search
+    postActions.style.display = 'none';
+    btn.style.display = '';
+  };
+  const showPostBattleActions = () => {
+    btn.style.display = 'none';
+    postActions.style.display = '';
+    btnNewOpp.onclick = () => {
+      postActions.style.display = 'none';
+      btn.style.display = '';
+      startBattle(wrap, myCard, address);
+    };
+    btnBackMenu.onclick = () => {
+      postActions.style.display = 'none';
+      btn.style.display = '';
+      wrap._renderModeSelect();
+    };
   };
   const search = { cancelled: false, cancelResult: null, ticketId: null };
 
@@ -688,7 +726,7 @@ async function startBattleServerV2(wrap, myCard, address) {
 
   slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
   wrap._searchSession = null;
-  resetBattleButton('BATTLE AGAIN');
+  showPostBattleActions();
 }
 
 async function startBattleLocal(wrap, myCard, address) {
@@ -770,9 +808,22 @@ async function startBattleLocal(wrap, myCard, address) {
 
   slotMe.innerHTML = `<div class="arena-slot-label">YOU</div>${buildCardHTML(myCard)}`;
 
-  btn.disabled    = false;
-  btn.textContent = 'BATTLE AGAIN';
-  btn.onclick = () => { log.innerHTML = ''; startBattle(wrap, myCard, address); };
+  const postActionsLocal = wrap.querySelector('#post-battle-actions');
+  const btnNewOppLocal   = wrap.querySelector('#btn-new-opponent');
+  const btnBackMenuLocal = wrap.querySelector('#btn-back-menu');
+  btn.style.display = 'none';
+  postActionsLocal.style.display = '';
+  btnNewOppLocal.onclick = () => {
+    postActionsLocal.style.display = 'none';
+    btn.style.display = '';
+    log.innerHTML = '';
+    startBattle(wrap, myCard, address);
+  };
+  btnBackMenuLocal.onclick = () => {
+    postActionsLocal.style.display = 'none';
+    btn.style.display = '';
+    wrap._renderModeSelect();
+  };
 }
 
 // ── Shared battle animation ─────────────────────────────────────────────────
